@@ -6,10 +6,8 @@ HEADERS = {"User-Agent": "cAI/1.0"}
 
 def smart_answer(q):
     low = q.lower().strip()
-    
     image_keywords = ["generate image", "create image", "make image", "draw", "imagine", "picture of", "image of"]
     is_image = any(k in low for k in image_keywords)
-
     if is_image:
         prompt = q
         for k in ["generate image of", "generate image", "create image of", "create image", "make image of", "make image", "draw", "image of", "picture of", "imagine"]:
@@ -20,7 +18,6 @@ def smart_answer(q):
         safe_prompt = urllib.parse.quote(prompt)
         img_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&seed={abs(hash(q))%100000}&nologo=true"
         return {"text": f"Created: {prompt}", "image": img_url}
-
     try:
         query = q.replace("who is","").replace("what is","").strip() or q
         query_enc = urllib.parse.quote(query)
@@ -30,59 +27,45 @@ def smart_answer(q):
             data=r.json()
             text = data.get('extract','')
             img = data.get('thumbnail',{}).get('source') or data.get('originalimage',{}).get('source')
-            title = data.get('title','')
-            return {"text": f"{text}\n\nSource: {title}", "image": img}
+            return {"text": text, "image": img}
         return {"text": f"Result for '{q}'", "image": None}
     except:
         return {"text": "Try again", "image": None}
 
 UI = """
 <!DOCTYPE html><html><head>
-<title>Companion</title>
+<title>cAI</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif}
+*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui}
 body{background:#0a0a0a;color:#ececec;height:100vh;display:flex;flex-direction:column;overflow:hidden}
-/* LOADING SPIN */
-#loader{position:fixed;inset:0;background:#050505;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;transition:opacity 0.8s ease}
+#loader{position:fixed;inset:0;background:#050505;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;transition:opacity 0.6s ease}
 #loader.hide{opacity:0;pointer-events:none}
-.logo-load{width:190px;height:190px;animation:spin 2.5s linear infinite, float 2s ease-in-out infinite;filter:drop-shadow(0 0 25px gold)}
+.logo-load{width:180px;height:180px;animation:spin 2.5s linear infinite;filter:drop-shadow(0 0 20px gold)}
 @keyframes spin{0%{transform:rotateY(0deg)}100%{transform:rotateY(360deg)}}
-@keyframes float{0%,100%{transform:translateY(0) rotateY(0deg)}50%{transform:translateY(-12px) rotateY(180deg)}}
-.loader-text{margin-top:20px;font-size:24px;font-weight:800;color:gold;letter-spacing:2px}
-/* HEADER - CLEAN LIKE CHROME */
-header{padding:12px 16px;border-bottom:1px solid #1a1a1a;display:flex;justify-content:flex-end;align-items:center}
+header{padding:12px 16px;display:flex;justify-content:flex-end;border-bottom:1px solid #1a1a1a}
 #chat{flex:1;overflow:auto;padding:20px;max-width:760px;margin:0 auto;width:100%;display:flex;flex-direction:column}
-.welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px;animation:fadeIn 0.6s}
-@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-.welcome h1{font-size:30px;font-weight:700;margin-bottom:8px;letter-spacing:-0.5px}
-.welcome p{color:#888;font-size:14px;margin-bottom:28px}
-.cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;max-width:560px}
-.card{background:#151515;border:1px solid #222;border-radius:14px;padding:14px;cursor:pointer;transition:0.2s;text-align:left}
-.card:hover{background:#1c1c1c;border-color:#333}
-.card.ic{font-size:20px;margin-bottom:4px}
-.card.t{font-size:13px;font-weight:600}
-.card.d{font-size:11px;color:#666;margin-top:2px}
-.bubble{padding:12px 16px;border-radius:20px;max-width:84%;margin:8px 0;white-space:pre-wrap;line-height:1.5;font-size:14.5px}
+.welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.welcome h1{font-size:30px;font-weight:700;margin-bottom:8px}
+.welcome p{color:#888;font-size:14px;margin-bottom:26px}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;max-width:540px}
+.card{background:#151515;border:1px solid #222;border-radius:14px;padding:14px;cursor:pointer;text-align:left}
+.card:hover{background:#1c1c1c}
+.bubble{padding:12px 16px;border-radius:20px;max-width:84%;margin:8px 0;white-space:pre-wrap;font-size:14.5px}
 .user{margin-left:auto;background:#fff;color:#000;border-bottom-right-radius:6px}
 .bot{background:#161616;border:1px solid #232323;border-bottom-left-radius:6px}
 .bot img{width:100%;max-width:400px;border-radius:12px;margin-top:10px;display:block}
-footer{border-top:1px solid #1a1a1a;padding:14px 12px;display:flex;justify-content:center;background:#0a0a0a}
-.box{width:100%;max-width:760px;background:#181818;border:1px solid #2a2a2a;border-radius:24px;display:flex;align-items:center;padding:4px 6px 4px 14px;transition:0.2s}
-.box:focus-within{border-color:#444;background:#1e1e1e}
+footer{border-top:1px solid #1a1a1a;padding:14px;display:flex;justify-content:center;background:#0a0a0a}
+.box{width:100%;max-width:760px;background:#181818;border:1px solid #2a2a2a;border-radius:24px;display:flex;align-items:center;padding:4px 6px 4px 14px}
 input{flex:1;background:transparent;border:none;color:#fff;outline:none;padding:10px 6px;font-size:15px}
-button.send{background:#fff;color:#000;border:none;width:32px;height:32px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px}
-#clear{background:transparent;color:#555;font-size:11px;border:1px solid #222;padding:5px 12px;border-radius:16px;cursor:pointer}
-#clear:hover{color:#aaa;border-color:#333}
-.mot{color:#aaa;font-size:12px;margin-bottom:10px;letter-spacing:0.5px}
+button.send{background:#fff;color:#000;border:none;width:32px;height:32px;border-radius:50%;cursor:pointer;font-weight:900}
+#clear{color:#555;font-size:11px;border:1px solid #222;padding:5px 12px;border-radius:16px;background:transparent;cursor:pointer}
+.mot{color:#888;font-size:12px;margin-bottom:10px}
 </style></head><body>
 <div id="loader">
   <img src="/logo.png" class="logo-load" onerror="this.style.display='none'">
-  <div class="loader-text">cAI</div>
 </div>
-<header>
-<button id="clear" onclick="clearChat()">New Chat</button>
-</header>
+<header><button id="clear" onclick="clearChat()">New Chat</button></header>
 <div id="chat"></div>
 <footer>
 <div class="box">
@@ -97,25 +80,21 @@ const SUGGESTIONS = [
  {icon:"📚",t:"Learn",d:"History of Benin",p:"Tell me history of Benin Kingdom"},
  {icon:"✨",t:"Design",d:"Luxury logo",p:"generate image of luxury logo"}
 ];
-
 function showWelcome(){
- let mots = ["What would you like to do today?","Ready to create something amazing? ✨","Your imagination is the limit. 🚀","Lets make magic today! 💡","What are we building today?"];
+ let mots = ["What would you like to do today?","Dream big, create bigger. ✨","Your imagination is the limit. 🚀","Ready to create something amazing? 💡"];
  let mot = mots[Math.floor(Math.random()*mots.length)];
  let chat=document.getElementById('chat');
- chat.innerHTML = '<div class="welcome"><div class="mot">'+mot+'</div><h1>Good morning 👋</h1><p>Chat, search, or generate images - I got you.</p><div class="cards">'+SUGGESTIONS.map(s=>'<div class="card" onclick="quick(\\''+s.p+'\\')"><div class="ic">'+s.icon+'</div><div class="t">'+s.t+'</div><div class="d">'+s.d+'</div></div>').join('')+'</div></div>';
+ chat.innerHTML = '<div class="welcome"><div class="mot">'+mot+'</div><h1>Good morning 👋</h1><p>Chat, search, or generate images.</p><div class="cards">'+SUGGESTIONS.map(s=>'<div class="card" onclick="quick(\\''+s.p+'\\')"><div>'+s.icon+'</div><div style=\\'font-weight:600;font-size:13px\\'>'+s.t+'</div><div style=\\'color:#666;font-size:11px\\'>'+s.d+'</div></div>').join('')+'</div></div>';
 }
 function quick(t){ let w=document.querySelector('.welcome'); if(w) w.remove(); document.getElementById('inp').value=t; send(); }
-
 window.onload = ()=>{
- setTimeout(()=>{ document.getElementById('loader').classList.add('hide'); }, 2500);
- let saved = localStorage.getItem('cAI_clean');
+ setTimeout(()=>{ document.getElementById('loader').classList.add('hide'); }, 2000);
+ let saved = localStorage.getItem('cAI_final');
  if(saved && saved.length>60){ document.getElementById('chat').innerHTML = saved; }
  else { showWelcome(); }
 };
-
-function saveChat(){ if(!document.querySelector('.welcome')){ localStorage.setItem('cAI_clean', document.getElementById('chat').innerHTML); } }
-function clearChat(){ document.getElementById('chat').innerHTML=""; localStorage.removeItem('cAI_clean'); showWelcome(); }
-
+function saveChat(){ if(!document.querySelector('.welcome')){ localStorage.setItem('cAI_final', document.getElementById('chat').innerHTML); } }
+function clearChat(){ document.getElementById('chat').innerHTML=""; localStorage.removeItem('cAI_final'); showWelcome(); }
 async function send(){
  let i=document.getElementById('inp'); let t=i.value.trim(); if(!t) return;
  let c=document.getElementById('chat');
@@ -130,22 +109,16 @@ async function send(){
 </script>
 </body></html>
 """
-
 @app.route('/')
 def home(): return render_template_string(UI)
-
 @app.route('/logo.png')
 def logo():
-    try:
-        return send_from_directory(os.path.dirname(os.path.abspath(__file__)), 'logo.png')
-    except:
-        return "", 404
-
+    try: return send_from_directory(os.path.dirname(os.path.abspath(__file__)), 'logo.png')
+    except: return "", 404
 @app.route('/ask', methods=['POST'])
 def ask():
     q = request.get_json().get('q','')
     result = smart_answer(q)
     return jsonify({"a": result["text"], "image": result["image"]})
-
 if __name__=='__main__':
     app.run(port=5000)
