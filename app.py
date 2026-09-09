@@ -6,12 +6,10 @@ HEADERS = {"User-Agent": "companionAI-Benin/1.0"}
 
 def smart_answer(q):
     low=q.lower()
-    # CHECK IF NA IMAGE GENERATION
     image_keywords = ["generate image", "create image", "make image", "draw", "generate a", "create a picture", "imagine"]
     is_image = any(k in low for k in image_keywords) or low.startswith("image of") or low.startswith("picture of")
 
     if is_image:
-        # Extract the prompt
         prompt = q
         for k in ["generate image of", "generate image", "create image of", "create image", "make image of", "make image", "draw", "image of", "picture of"]:
             if k in low:
@@ -19,10 +17,9 @@ def smart_answer(q):
                 break
         if len(prompt) < 3:
             prompt = q
-        # Use Pollinations free AI
         safe_prompt = urllib.parse.quote(prompt)
         img_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&seed={abs(hash(q))%100000}&nologo=true"
-        return {"text": f"🎨 Generated image for: '{prompt}'\n\nHere is your image 👇", "image": img_url}
+        return {"text": f"🎨 Generated: '{prompt}'", "image": img_url}
 
     if "how far" in low:
         return {"text": "How far padi! Your chat dey save now!", "image": None}
@@ -53,77 +50,103 @@ def smart_answer(q):
 
 UI = """<!DOCTYPE html><html><head>
 <title>companionAI</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='white'/><text x='8' y='65' font-family='Arial' font-size='38' font-weight='400' fill='black'>c</text><text x='28' y='65' font-family='Arial' font-size='42' font-weight='900' fill='black'>A</text><text x='62' y='70' font-family='Arial' font-size='58' font-weight='300' fill='black'>I</text></svg>">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui}
 body{background:#0f0f0f;color:#ececec;height:100vh;display:flex;flex-direction:column}
-header{padding:16px;border-bottom:1px solid #222;display:flex;justify-content:space-between;align-items:center}
-#chat{flex:1;overflow:auto;padding:20px;max-width:900px;margin:0 auto;width:100%}
+header{padding:14px 16px;border-bottom:1px solid #222;display:flex;justify-content:space-between;align-items:center}
+.main{flex:1;display:flex;overflow:hidden}
+#left{width:320px;background:#0a0a0a;border-right:1px solid #222;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+#left h3{font-size:13px;color:#888;letter-spacing:1px;text-transform:uppercase}
+.gen-card{background:#151515;border:1px solid #222;border-radius:14px;overflow:hidden}
+.gen-card img{width:100%;display:block}
+.gen-card.cap{padding:8px 10px;font-size:11px;color:#aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#center{flex:1;display:flex;flex-direction:column}
+#chat{flex:1;overflow:auto;padding:20px}
 .bubble{padding:14px 16px;border-radius:18px;max-width:85%;margin:10px 0;white-space:pre-wrap;line-height:1.6}
 .user{margin-left:auto;background:#fff;color:#000}
 .bot{background:#1e1e1e;border:1px solid #2a2a2a}
-.bot img{width:100%;max-width:400px;border-radius:12px;margin-top:10px;display:block;border:1px solid #333}
-footer{border-top:1px solid #222;padding:12px;display:flex;justify-content:center;gap:8px;flex-direction:column;align-items:center}
-.box{width:100%;max-width:900px;background:#1e1e1e;border:1px solid #333;border-radius:28px;display:flex;align-items:center;padding:6px 10px}
+.bot img{width:100%;max-width:350px;border-radius:12px;margin-top:10px;display:block;border:1px solid #333}
+footer{border-top:1px solid #222;padding:12px;display:flex;justify-content:center;flex-direction:column;align-items:center;gap:8px}
+.box{width:100%;max-width:700px;background:#1e1e1e;border:1px solid #333;border-radius:28px;display:flex;align-items:center;padding:6px 10px}
 input{flex:1;background:transparent;border:none;color:#fff;outline:none;padding:12px;font-size:16px}
 button{background:#fff;border:none;width:38px;height:38px;border-radius:50%;cursor:pointer;margin-left:4px;font-size:18px}
 #mic{background:#ff3b30;color:#fff} #mic.listening{background:#10a37f;animation:pulse 1s infinite}
 @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.1)}100%{transform:scale(1)}}
-#clear{background:#333;color:#fff;font-size:12px;width:auto;padding:0 12px;border-radius:12px}
-.hint{max-width:900px;width:100%;display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
-.hint span{background:#1a1a1a;border:1px solid #2a2a2a;padding:6px 10px;border-radius:20px;font-size:11px;cursor:pointer;color:#aaa}
-.hint span:hover{background:#fff;color:#000}
+#clear{background:#333;color:#fff;font-size:11px;width:auto;padding:0 10px;border-radius:10px}
+.hint{display:flex;gap:6px;flex-wrap:wrap;max-width:700px;width:100%}
+.hint span{background:#1a1a1a;border:1px solid #2a2a2a;padding:5px 9px;border-radius:20px;font-size:10px;cursor:pointer;color:#aaa}
+@media(max-width:800px){#left{width:120px} #left h3{font-size:10px}.gen-card.cap{font-size:9px}}
 </style></head><body>
 <header>
 <h2>companionAI 🎨</h2>
-<div><button id="clear" onclick="clearChat()">Clear</button> <span style="color:#10a37f;font-size:12px">● Saved</span></div>
+<div><button id="clear" onclick="clearChat()">Clear All</button></div>
 </header>
+<div class="main">
+<div id="left">
+<h3>🎨 Generated Images (Vertical)</h3>
+<div id="imageList" style="display:flex;flex-direction:column;gap:12px"></div>
+</div>
+<div id="center">
 <div id="chat"></div>
 <footer>
 <div class="hint">
-<span onclick="quick('generate image of futuristic Lagos city')">🎨 Lagos City</span>
-<span onclick="quick('generate image of African king with golden crown')">👑 African King</span>
-<span onclick="quick('generate image of cute cat wearing agbada')">🐱 Cat Agbada</span>
-<span onclick="quick('who is Wizkid')">❓ Wizkid</span>
+<span onclick="quick('generate image of futuristic Lagos')">Lagos</span>
+<span onclick="quick('generate image of African king')">King</span>
+<span onclick="quick('generate image of cute anime girl')">Anime</span>
+<span onclick="quick('who is Burna Boy')">Burna</span>
 </div>
 <div class="box">
-<input id="inp" placeholder="Ask or say 'generate image of...' " onkeydown="if(event.key==='Enter')send()">
+<input id="inp" placeholder="Type 'generate image of...' " onkeydown="if(event.key==='Enter')send()">
 <button id="mic" onclick="startMic()">🎤</button>
 <button onclick="send()">↑</button>
 </div>
 </footer>
+</div>
+</div>
 <script>
 function quick(t){ document.getElementById('inp').value=t; send(); }
 let recognition;
 if('webkitSpeechRecognition' in window || 'SpeechRecognition' in window){
  let SR = window.SpeechRecognition || window.webkitSpeechRecognition;
  recognition = new SR(); recognition.lang='en-NG';
- recognition.onstart=()=>{document.getElementById('mic').classList.add('listening'); document.getElementById('mic').innerText='🔴';}
- recognition.onend=()=>{document.getElementById('mic').classList.remove('listening'); document.getElementById('mic').innerText='🎤';}
+ recognition.onstart=()=>{document.getElementById('mic').classList.add('listening');}
+ recognition.onend=()=>{document.getElementById('mic').classList.remove('listening');}
  recognition.onresult=(e)=>{ document.getElementById('inp').value=e.results[0][0].transcript; send(); };
 }
 function startMic(){ if(recognition) recognition.start(); }
 window.onload = ()=>{
  let saved = localStorage.getItem('companion_chat');
- if(saved){ document.getElementById('chat').innerHTML = saved; document.getElementById('chat').scrollTop = 99999; }
+ if(saved){ document.getElementById('chat').innerHTML = saved; }
+ let savedImg = localStorage.getItem('companion_images');
+ if(savedImg){ document.getElementById('imageList').innerHTML = savedImg; }
+ document.getElementById('chat').scrollTop = 99999;
 };
-function saveChat(){ localStorage.setItem('companion_chat', document.getElementById('chat').innerHTML); }
+function saveAll(){
+  localStorage.setItem('companion_chat', document.getElementById('chat').innerHTML);
+  localStorage.setItem('companion_images', document.getElementById('imageList').innerHTML);
+}
 function clearChat(){
- if(confirm("Clear chat?")){
+ if(confirm("Clear everything?")){
    document.getElementById('chat').innerHTML="";
-   localStorage.removeItem('companion_chat');
+   document.getElementById('imageList').innerHTML="";
+   localStorage.clear();
  }
 }
 async function send(){
  let i=document.getElementById('inp'); let t=i.value.trim(); if(!t)return;
  let c=document.getElementById('chat');
- c.innerHTML+=`<div class="bubble user">${t}</div>`; i.value=''; saveChat(); c.scrollTop=99999;
- c.innerHTML+=`<div class="bubble bot" id="temp">🎨 Generating...</div>`; c.scrollTop=99999;
+ let list=document.getElementById('imageList');
+ c.innerHTML+=`<div class="bubble user">${t}</div>`; i.value=''; saveAll(); c.scrollTop=99999;
+ c.innerHTML+=`<div class="bubble bot" id="temp">🎨 Generating...</div>`;
  let r=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:t})}).then(r=>r.json());
  document.getElementById('temp')?.remove();
- let imgHtml = r.image? `<img src="${r.image}" loading="lazy" onerror="this.style.display='none'"><br><a href="${r.image}" target="_blank" style="color:#a78bfa;font-size:12px">⬇ Download Image</a>` : '';
- c.innerHTML+=`<div class="bubble bot">${r.a}${imgHtml}</div>`; c.scrollTop=99999; saveChat();
- if('speechSynthesis' in window){ speechSynthesis.cancel(); let u=new SpeechSynthesisUtterance(r.a.substring(0,300)); u.lang='en-NG'; speechSynthesis.speak(u); }
+ let imgHtml = r.image? `<img src="${r.image}" loading="lazy"><br><a href="${r.image}" target="_blank" style="color:#a78bfa;font-size:12px">⬇ Download</a>` : '';
+ c.innerHTML+=`<div class="bubble bot">${r.a}${imgHtml}</div>`;
+ // ADD TO LEFT VERTICAL LIST IF IT'S AN IMAGE
+ if(r.image && r.image.includes('pollinations')){
+   list.innerHTML = `<div class="gen-card"><img src="${r.image}"><div class="cap">${t.substring(0,40)}</div></div>` + list.innerHTML;
+ }
+ c.scrollTop=99999; saveAll();
 }
 </script>
 </body></html>"""
