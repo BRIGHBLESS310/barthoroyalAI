@@ -6,6 +6,24 @@ HEADERS = {"User-Agent": "companionAI-Benin/1.0"}
 
 def smart_answer(q):
     low=q.lower()
+    # CHECK IF NA IMAGE GENERATION
+    image_keywords = ["generate image", "create image", "make image", "draw", "generate a", "create a picture", "imagine"]
+    is_image = any(k in low for k in image_keywords) or low.startswith("image of") or low.startswith("picture of")
+
+    if is_image:
+        # Extract the prompt
+        prompt = q
+        for k in ["generate image of", "generate image", "create image of", "create image", "make image of", "make image", "draw", "image of", "picture of"]:
+            if k in low:
+                prompt = q.lower().split(k,1)[-1].strip()
+                break
+        if len(prompt) < 3:
+            prompt = q
+        # Use Pollinations free AI
+        safe_prompt = urllib.parse.quote(prompt)
+        img_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&seed={abs(hash(q))%100000}&nologo=true"
+        return {"text": f"🎨 Generated image for: '{prompt}'\n\nHere is your image 👇", "image": img_url}
+
     if "how far" in low:
         return {"text": "How far padi! Your chat dey save now!", "image": None}
     try:
@@ -44,31 +62,38 @@ header{padding:16px;border-bottom:1px solid #222;display:flex;justify-content:sp
 .bubble{padding:14px 16px;border-radius:18px;max-width:85%;margin:10px 0;white-space:pre-wrap;line-height:1.6}
 .user{margin-left:auto;background:#fff;color:#000}
 .bot{background:#1e1e1e;border:1px solid #2a2a2a}
-.bot img{width:100%;max-width:350px;border-radius:12px;margin-top:10px;display:block}
-footer{border-top:1px solid #222;padding:12px;display:flex;justify-content:center;gap:8px}
+.bot img{width:100%;max-width:400px;border-radius:12px;margin-top:10px;display:block;border:1px solid #333}
+footer{border-top:1px solid #222;padding:12px;display:flex;justify-content:center;gap:8px;flex-direction:column;align-items:center}
 .box{width:100%;max-width:900px;background:#1e1e1e;border:1px solid #333;border-radius:28px;display:flex;align-items:center;padding:6px 10px}
 input{flex:1;background:transparent;border:none;color:#fff;outline:none;padding:12px;font-size:16px}
 button{background:#fff;border:none;width:38px;height:38px;border-radius:50%;cursor:pointer;margin-left:4px;font-size:18px}
 #mic{background:#ff3b30;color:#fff} #mic.listening{background:#10a37f;animation:pulse 1s infinite}
 @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.1)}100%{transform:scale(1)}}
 #clear{background:#333;color:#fff;font-size:12px;width:auto;padding:0 12px;border-radius:12px}
-.nav{display:flex;gap:8px}
-.nav a{background:#222;color:#fff;padding:8px 14px;border-radius:20px;text-decoration:none;font-size:12px;border:1px solid #333}
-.nav a:hover{background:#fff;color:#000}
+.hint{max-width:900px;width:100%;display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.hint span{background:#1a1a1a;border:1px solid #2a2a2a;padding:6px 10px;border-radius:20px;font-size:11px;cursor:pointer;color:#aaa}
+.hint span:hover{background:#fff;color:#000}
 </style></head><body>
 <header>
-<h2>companionAI</h2>
-<div class="nav"><a href="/generate-image">🎨 Image</a><a href="/game">🎮 Game</a><button id="clear" onclick="clearChat()">Clear</button></div>
+<h2>companionAI 🎨</h2>
+<div><button id="clear" onclick="clearChat()">Clear</button> <span style="color:#10a37f;font-size:12px">● Saved</span></div>
 </header>
 <div id="chat"></div>
 <footer>
+<div class="hint">
+<span onclick="quick('generate image of futuristic Lagos city')">🎨 Lagos City</span>
+<span onclick="quick('generate image of African king with golden crown')">👑 African King</span>
+<span onclick="quick('generate image of cute cat wearing agbada')">🐱 Cat Agbada</span>
+<span onclick="quick('who is Wizkid')">❓ Wizkid</span>
+</div>
 <div class="box">
-<input id="inp" placeholder="Ask..." onkeydown="if(event.key==='Enter')send()">
+<input id="inp" placeholder="Ask or say 'generate image of...' " onkeydown="if(event.key==='Enter')send()">
 <button id="mic" onclick="startMic()">🎤</button>
 <button onclick="send()">↑</button>
 </div>
 </footer>
 <script>
+function quick(t){ document.getElementById('inp').value=t; send(); }
 let recognition;
 if('webkitSpeechRecognition' in window || 'SpeechRecognition' in window){
  let SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -84,7 +109,7 @@ window.onload = ()=>{
 };
 function saveChat(){ localStorage.setItem('companion_chat', document.getElementById('chat').innerHTML); }
 function clearChat(){
- if(confirm("You wan clear all chat?")){
+ if(confirm("Clear chat?")){
    document.getElementById('chat').innerHTML="";
    localStorage.removeItem('companion_chat');
  }
@@ -92,141 +117,19 @@ function clearChat(){
 async function send(){
  let i=document.getElementById('inp'); let t=i.value.trim(); if(!t)return;
  let c=document.getElementById('chat');
- c.innerHTML+=`<div class="bubble user">${t}</div>`; i.value=''; saveChat();
+ c.innerHTML+=`<div class="bubble user">${t}</div>`; i.value=''; saveChat(); c.scrollTop=99999;
+ c.innerHTML+=`<div class="bubble bot" id="temp">🎨 Generating...</div>`; c.scrollTop=99999;
  let r=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:t})}).then(r=>r.json());
- let imgHtml = r.image? `<img src="${r.image}" onerror="this.style.display='none'">` : '';
+ document.getElementById('temp')?.remove();
+ let imgHtml = r.image? `<img src="${r.image}" loading="lazy" onerror="this.style.display='none'"><br><a href="${r.image}" target="_blank" style="color:#a78bfa;font-size:12px">⬇ Download Image</a>` : '';
  c.innerHTML+=`<div class="bubble bot">${r.a}${imgHtml}</div>`; c.scrollTop=99999; saveChat();
  if('speechSynthesis' in window){ speechSynthesis.cancel(); let u=new SpeechSynthesisUtterance(r.a.substring(0,300)); u.lang='en-NG'; speechSynthesis.speak(u); }
 }
 </script>
 </body></html>"""
 
-IMAGE_UI = """<!DOCTYPE html><html><head><title>Barthoroyal Image AI</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui}
-body{background:#0a0a0a;color:#fff;min-height:100vh}
-header{padding:18px 22px;border-bottom:1px solid #222;display:flex;justify-content:space-between;align-items:center}
-a{color:#fff;text-decoration:none;background:#222;padding:8px 14px;border-radius:20px;font-size:13px;border:1px solid #333}
-.wrap{max-width:900px;margin:0 auto;padding:30px 20px}
-h1{font-size:32px;margin-bottom:8px;background:linear-gradient(90deg,#fff,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-p{color:#888;margin-bottom:20px}
-.box{background:#151515;border:1px solid #222;border-radius:20px;padding:16px;display:flex;gap:10px;margin-bottom:18px}
-input{flex:1;background:#0f0f0f;border:1px solid #333;color:#fff;padding:14px 16px;border-radius:14px;font-size:16px;outline:none}
-button.gen{background:#fff;color:#000;border:none;padding:14px 22px;border-radius:14px;font-weight:700;cursor:pointer}
-button.gen:disabled{opacity:0.5}
-.chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
-.chip{background:#1a1a1a;border:1px solid #2a2a2a;color:#bbb;padding:8px 12px;border-radius:20px;font-size:12px;cursor:pointer}
-.chip:hover{background:#fff;color:#000}
-#result{margin-top:20px}
-#result img{width:100%;border-radius:18px;border:1px solid #222}
-.actions{margin-top:12px;display:flex;gap:10px}
-.actions a{padding:10px 16px}
-#loading{color:#a78bfa;margin-top:12px;display:none}
-</style></head><body>
-<header><h3>companionAI 🎨</h3><div style="display:flex;gap:8px"><a href="/">💬 Chat</a><a href="/game">🎮 Game</a></div></header>
-<div class="wrap">
-<h1>AI Image Generator</h1>
-<p>Type wetin you wan see, AI go create am for you - No API key needed!</p>
-<div class="chips">
-<span class="chip" onclick="setPrompt(this)">A futuristic Lagos city at night, cyberpunk</span>
-<span class="chip" onclick="setPrompt(this)">African king with golden crown, royal</span>
-<span class="chip" onclick="setPrompt(this)">Cute Nigerian jollof rice as anime character</span>
-<span class="chip" onclick="setPrompt(this)">Barthoroyal logo, neon, premium</span>
-</div>
-<div class="box">
-<input id="prompt" placeholder="e.g. A lion wearing agbada in space...">
-<button class="gen" id="btn" onclick="generate()">Generate ✨</button>
-</div>
-<div id="loading">🎨 Generating your image... (5 seconds)</div>
-<div id="result"></div>
-</div>
-<script>
-function setPrompt(el){document.getElementById('prompt').value=el.innerText; generate();}
-async function generate(){
- let p=document.getElementById('prompt').value.trim(); if(!p) return;
- let btn=document.getElementById('btn'); let load=document.getElementById('loading'); let res=document.getElementById('result');
- btn.disabled=true; load.style.display='block'; res.innerHTML='';
- let enc=encodeURIComponent(p);
- let url=`https://image.pollinations.ai/prompt/${enc}?width=1024&height=1024&seed=${Date.now()}&nologo=true`;
- // preload
- let img=new Image(); img.onload=()=>{ load.style.display='none'; btn.disabled=false; res.innerHTML=`<img src="${url}"><div class="actions"><a href="${url}" target="_blank" download>⬇ Download</a><a href="#" onclick="navigator.clipboard.writeText('${url}');return false;">🔗 Copy Link</a></div>`; };
- img.onerror=()=>{ load.style.display='none'; btn.disabled=false; res.innerHTML='Error generating, try again'; };
- img.src=url;
-}
-</script>
-</body></html>"""
-
-GAME_UI = """<!DOCTYPE html><html><head><title>Barthoroyal Shooter</title>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#000;overflow:hidden;font-family:system-ui}canvas{display:block}</style>
-</head><body>
-<canvas id="c"></canvas>
-<script>
-const canvas=document.getElementById('c'), ctx=canvas.getContext('2d');
-function resize(){canvas.width=innerWidth; canvas.height=innerHeight} resize(); window.onresize=resize;
-let player={x:innerWidth/2,y:innerHeight-80,w:40,h:40}, bullets=[], enemies=[], particles=[], score=0, lives=3, gameOver=false, keys={};
-let enemyTimer=0;
-function spawnEnemy(){ enemies.push({x:Math.random()*(canvas.width-40),y:-40,w:30+Math.random()*20,h:30,s:1+Math.random()*2+score/100,color:`hsl(${Math.random()*60+260},80%,60%)`}); }
-function shoot(){ bullets.push({x:player.x,y:player.y,w:4,h:12,s:8}); }
-function explode(x,y,color){ for(let i=0;i<12;i++) particles.push({x,y,vx:(Math.random()-0.5)*8,vy:(Math.random()-0.5)*8,life:20,color}); }
-let lastShoot=0;
-function update(){
- if(gameOver) return;
- if(keys['ArrowLeft']||keys['a']) player.x-=6;
- if(keys['ArrowRight']||keys['d']) player.x+=6;
- player.x=Math.max(0,Math.min(canvas.width-player.w,player.x));
- if((keys[' ']||keys['w']||keys['ArrowUp']) && Date.now()-lastShoot>150){ shoot(); lastShoot=Date.now(); }
- enemyTimer++; if(enemyTimer> Math.max(20,60-score/2)){ spawnEnemy(); enemyTimer=0; }
- bullets.forEach((b,i)=>{ b.y-=b.s; if(b.y<0) bullets.splice(i,1); });
- enemies.forEach((e,ei)=>{
-   e.y+=e.s;
-   if(e.y>canvas.height){ enemies.splice(ei,1); lives--; if(lives<=0) gameOver=true; }
-   bullets.forEach((b,bi)=>{
-     if(b.x<e.x+e.w && b.x+b.w>e.x && b.y<e.y+e.h && b.y+b.h>e.y){
-       explode(e.x+e.w/2,e.y+e.h/2,e.color); enemies.splice(ei,1); bullets.splice(bi,1); score+=10;
-     }
-   });
-   if(player.x<e.x+e.w && player.x+player.w>e.x && player.y<e.y+e.h && player.y+player.h>e.y){
-     explode(player.x+player.w/2,player.y+player.h/2,'#fff'); enemies.splice(ei,1); lives--; if(lives<=0) gameOver=true;
-   }
- });
- particles.forEach((p,i)=>{ p.x+=p.vx; p.y+=p.vy; p.life--; if(p.life<=0) particles.splice(i,1); });
-}
-function draw(){
- ctx.fillStyle='#070710'; ctx.fillRect(0,0,canvas.width,canvas.height);
- // stars
- ctx.fillStyle='#ffffff11'; for(let i=0;i<80;i++) ctx.fillRect((i*123)%canvas.width,(i*321+Date.now()/20)%canvas.height,2,2);
- // player
- ctx.fillStyle='#fff'; ctx.shadowColor='#8b5cf6'; ctx.shadowBlur=20; ctx.fillRect(player.x,player.y,player.w,player.h); ctx.shadowBlur=0;
- ctx.fillStyle='#8b5cf6'; ctx.fillRect(player.x+player.w/2-2,player.y-10,4,10);
- // bullets
- ctx.fillStyle='#f0f'; bullets.forEach(b=>{ ctx.fillRect(b.x,b.y,b.w,b.h); });
- // enemies
- enemies.forEach(e=>{ ctx.fillStyle=e.color; ctx.shadowColor=e.color; ctx.shadowBlur=12; ctx.fillRect(e.x,e.y,e.w,e.h); ctx.shadowBlur=0; });
- // particles
- particles.forEach(p=>{ ctx.fillStyle=p.color; ctx.globalAlpha=p.life/20; ctx.fillRect(p.x,p.y,4,4); ctx.globalAlpha=1; });
- // UI
- ctx.fillStyle='#fff'; ctx.font='18px system-ui'; ctx.fillText(`Score: ${score} | Lives: ${lives}`,14,28);
- ctx.fillStyle='#ffffff88'; ctx.font='12px system-ui'; ctx.fillText('Move: A/D or ← → | Shoot: SPACE | Tap screen to shoot',14,canvas.height-12);
- if(gameOver){ ctx.fillStyle='#000a'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.fillStyle='#fff'; ctx.font='bold 42px system-ui'; ctx.textAlign='center'; ctx.fillText('GAME OVER',canvas.width/2,canvas.height/2-20); ctx.font='20px system-ui'; ctx.fillText(`Score: ${score}`,canvas.width/2,canvas.height/2+20); ctx.fillText('Tap or Press R to Restart',canvas.width/2,canvas.height/2+60); ctx.textAlign='left'; }
-}
-window.addEventListener('keydown',e=>{ keys[e.key]=true; if(e.key==='r'&&gameOver){ enemies=[]; bullets=[]; score=0; lives=3; gameOver=false; } });
-window.addEventListener('keyup',e=>{ keys[e.key]=false; });
-canvas.addEventListener('touchmove',e=>{ player.x=e.touches[0].clientX-player.w/2; e.preventDefault(); },{passive:false});
-canvas.addEventListener('touchstart',e=>{ if(gameOver){ enemies=[]; bullets=[]; score=0; lives=3; gameOver=false; } else shoot(); },{passive:false});
-(function loop(){ update(); draw(); requestAnimationFrame(loop); })();
-</script>
-</body></html>"""
-
 @app.route('/')
 def home(): return render_template_string(UI)
-
-@app.route('/generate-image')
-def image_page(): return render_template_string(IMAGE_UI)
-
-@app.route('/game')
-def game_page(): return render_template_string(GAME_UI)
-
 @app.route('/ask', methods=['POST'])
 def ask():
     q=request.get_json().get('q','')
