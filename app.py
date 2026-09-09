@@ -1,28 +1,27 @@
 from flask import Flask, request, jsonify, render_template_string
-import requests, urllib.parse
+import requests, urllib.parse, random
 
 app = Flask(__name__)
 HEADERS = {"User-Agent": "companionAI-Benin/1.0"}
 
 def smart_answer(q):
     low=q.lower()
-    image_keywords = ["generate image", "create image", "make image", "draw", "generate a", "create a picture", "imagine"]
-    is_image = any(k in low for k in image_keywords) or low.startswith("image of") or low.startswith("picture of")
+    image_keywords = ["generate image", "create image", "make image", "draw", "generate a", "create a picture", "imagine", "picture of"]
+    is_image = any(k in low for k in image_keywords) or low.startswith("image of")
 
     if is_image:
         prompt = q
-        for k in ["generate image of", "generate image", "create image of", "create image", "make image of", "make image", "draw", "image of", "picture of"]:
+        for k in ["generate image of", "generate image", "create image of", "create image", "make image of", "make image", "draw", "image of", "picture of", "imagine"]:
             if k in low:
                 prompt = q.lower().split(k,1)[-1].strip()
                 break
-        if len(prompt) < 3:
-            prompt = q
+        if len(prompt) < 3: prompt = q
         safe_prompt = urllib.parse.quote(prompt)
         img_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&seed={abs(hash(q))%100000}&nologo=true"
-        return {"text": f"🎨 Generated: '{prompt}'", "image": img_url}
+        return {"text": f"🎨 Created: '{prompt}'", "image": img_url}
 
     if "how far" in low:
-        return {"text": "How far padi! Your chat dey save now!", "image": None}
+        return {"text": "How far padi! 🚀 Ready to create something amazing today?", "image": None}
     try:
         query = q.replace("who is","").replace("what is","").strip() or q
         query_enc = urllib.parse.quote(query)
@@ -44,115 +43,143 @@ def smart_answer(q):
                 data=r2.json()
                 img = data.get('thumbnail',{}).get('source') or data.get('originalimage',{}).get('source')
                 return {"text": f"{data.get('extract','')}\n\nSource: {data.get('title','')}", "image": img}
-        return {"text": f"I search '{q}' - try again!", "image": None}
+        return {"text": f"I searched '{q}' - try rephrasing!", "image": None}
     except Exception as e:
         return {"text": f"Error: {str(e)[:100]}", "image": None}
+
+MOTIVATIONS = [
+    "What would you like to do today?",
+    "Dream big, create bigger. ✨",
+    "Your imagination is the limit. 🚀",
+    "Every great idea starts with a single prompt.",
+    "Ready to turn ideas into reality?",
+    "Let's make something amazing today! 💡",
+    "The future belongs to creators like you.",
+    "What will you build today, legend? 👑"
+]
 
 UI = """<!DOCTYPE html><html><head>
 <title>companionAI</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui}
-body{background:#0f0f0f;color:#ececec;height:100vh;display:flex;flex-direction:column}
-header{padding:14px 16px;border-bottom:1px solid #222;display:flex;justify-content:space-between;align-items:center}
-.main{flex:1;display:flex;overflow:hidden}
-#left{width:320px;background:#0a0a0a;border-right:1px solid #222;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
-#left h3{font-size:13px;color:#888;letter-spacing:1px;text-transform:uppercase}
-.gen-card{background:#151515;border:1px solid #222;border-radius:14px;overflow:hidden}
-.gen-card img{width:100%;display:block}
-.gen-card.cap{padding:8px 10px;font-size:11px;color:#aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#center{flex:1;display:flex;flex-direction:column}
-#chat{flex:1;overflow:auto;padding:20px}
-.bubble{padding:14px 16px;border-radius:18px;max-width:85%;margin:10px 0;white-space:pre-wrap;line-height:1.6}
-.user{margin-left:auto;background:#fff;color:#000}
-.bot{background:#1e1e1e;border:1px solid #2a2a2a}
-.bot img{width:100%;max-width:350px;border-radius:12px;margin-top:10px;display:block;border:1px solid #333}
-footer{border-top:1px solid #222;padding:12px;display:flex;justify-content:center;flex-direction:column;align-items:center;gap:8px}
-.box{width:100%;max-width:700px;background:#1e1e1e;border:1px solid #333;border-radius:28px;display:flex;align-items:center;padding:6px 10px}
-input{flex:1;background:transparent;border:none;color:#fff;outline:none;padding:12px;font-size:16px}
-button{background:#fff;border:none;width:38px;height:38px;border-radius:50%;cursor:pointer;margin-left:4px;font-size:18px}
-#mic{background:#ff3b30;color:#fff} #mic.listening{background:#10a37f;animation:pulse 1s infinite}
-@keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.1)}100%{transform:scale(1)}}
-#clear{background:#333;color:#fff;font-size:11px;width:auto;padding:0 10px;border-radius:10px}
-.hint{display:flex;gap:6px;flex-wrap:wrap;max-width:700px;width:100%}
-.hint span{background:#1a1a1a;border:1px solid #2a2a2a;padding:5px 9px;border-radius:20px;font-size:10px;cursor:pointer;color:#aaa}
-@media(max-width:800px){#left{width:120px} #left h3{font-size:10px}.gen-card.cap{font-size:9px}}
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:Inter,system-ui,sans-serif}
+body{background:#0a0a0a;color:#ececec;height:100vh;display:flex;flex-direction:column}
+header{padding:16px 20px;border-bottom:1px solid #1a1a1a;display:flex;justify-content:space-between;align-items:center;background:#0a0a0a}
+header h2{font-weight:700;letter-spacing:-0.5px;font-size:20px;background:linear-gradient(90deg,#fff,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+#chat{flex:1;overflow:auto;padding:20px;max-width:800px;margin:0 auto;width:100%;display:flex;flex-direction:column}
+.welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px 20px;animation:fadeIn 0.8s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.welcome h1{font-size:32px;font-weight:700;margin-bottom:12px;letter-spacing:-1px}
+.welcome.sub{color:#888;font-size:16px;margin-bottom:32px;max-width:500px;line-height:1.5}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%;max-width:600px;margin-bottom:20px}
+.card{background:#141414;border:1px solid #222;border-radius:16px;padding:16px;text-align:left;cursor:pointer;transition:all 0.2s}
+.card:hover{background:#1a1a1a;border-color:#333;transform:translateY(-2px)}
+.card.icon{font-size:22px;margin-bottom:8px}
+.card.t{font-size:14px;font-weight:600;margin-bottom:4px}
+.card.d{font-size:12px;color:#888}
+.bubble{padding:14px 18px;border-radius:20px;max-width:85%;margin:10px 0;white-space:pre-wrap;line-height:1.6;font-size:15px}
+.user{margin-left:auto;background:#fff;color:#000;border-bottom-right-radius:6px}
+.bot{background:#1a1a1a;border:1px solid #222;border-bottom-left-radius:6px}
+.bot img{width:100%;max-width:420px;border-radius:14px;margin-top:12px;display:block;border:1px solid #222}
+footer{border-top:1px solid #1a1a1a;padding:16px;display:flex;justify-content:center;gap:8px;background:#0a0a0a}
+.box{width:100%;max-width:800px;background:#141414;border:1px solid #222;border-radius:28px;display:flex;align-items:center;padding:6px 10px;transition:border-color 0.2s}
+.box:focus-within{border-color:#555}
+input{flex:1;background:transparent;border:none;color:#fff;outline:none;padding:12px 14px;font-size:16px}
+button.send{background:#fff;border:none;width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;transition:transform 0.1s}
+button.send:active{transform:scale(0.92)}
+#mic{background:#1a1a1a;border:1px solid #222;color:#fff}
+#clear{background:transparent;color:#666;font-size:12px;border:1px solid #222;padding:6px 14px;border-radius:20px;cursor:pointer}
+#clear:hover{color:#fff;border-color:#444}
+.motivation{color:#a78bfa;font-weight:600;font-size:13px;margin-bottom:8px;letter-spacing:0.5px;text-transform:uppercase}
 </style></head><body>
 <header>
-<h2>companionAI 🎨</h2>
-<div><button id="clear" onclick="clearChat()">Clear All</button></div>
+<h2>companionAI</h2>
+<div><button id="clear" onclick="clearChat()">New Chat</button></div>
 </header>
-<div class="main">
-<div id="left">
-<h3>🎨 Generated Images (Vertical)</h3>
-<div id="imageList" style="display:flex;flex-direction:column;gap:12px"></div>
-</div>
-<div id="center">
 <div id="chat"></div>
 <footer>
-<div class="hint">
-<span onclick="quick('generate image of futuristic Lagos')">Lagos</span>
-<span onclick="quick('generate image of African king')">King</span>
-<span onclick="quick('generate image of cute anime girl')">Anime</span>
-<span onclick="quick('who is Burna Boy')">Burna</span>
-</div>
 <div class="box">
-<input id="inp" placeholder="Type 'generate image of...' " onkeydown="if(event.key==='Enter')send()">
+<input id="inp" placeholder="Ask anything or generate an image..." onkeydown="if(event.key==='Enter')send()">
 <button id="mic" onclick="startMic()">🎤</button>
-<button onclick="send()">↑</button>
+<button class="send" onclick="send()">↑</button>
 </div>
 </footer>
-</div>
-</div>
 <script>
-function quick(t){ document.getElementById('inp').value=t; send(); }
+const MOTIVATIONS = ["What would you like to do today?","Dream big, create bigger. ✨","Your imagination is the limit. 🚀","Every great idea starts with a single prompt.","Ready to turn ideas into reality?","Let's make something amazing today! 💡","The future belongs to creators like you.","What will you build today, legend? 👑"];
+const SUGGESTIONS = [
+ {icon:"🎨",t:"Create an image",d:"Generate futuristic Lagos city",prompt:"generate image of futuristic Lagos city at night, cyberpunk"},
+ {icon:"💡",t:"Get inspired",d:"Motivational business ideas",prompt:"Give me 5 profitable business ideas in Benin"},
+ {icon:"📚",t:"Learn something",d:"Who is the richest man in Africa?",prompt:"Who is the richest man in Africa?"},
+ {icon:"✨",t:"Design",d:"Logo for my brand Barthoroyal",prompt:"generate image of luxury logo for Barthoroyal brand, gold and black"}
+];
+
+function showWelcome(){
+ let mot = MOTIVATIONS[Math.floor(Math.random()*MOTIVATIONS.length)];
+ let chat=document.getElementById('chat');
+ chat.innerHTML = `
+ <div class="welcome">
+   <div class="motivation">${mot}</div>
+   <h1>Good morning, Creator 👋</h1>
+   <p class="sub">I'm companionAI - your partner for chat, search, and AI image generation. What are we building today?</p>
+   <div class="cards">
+     ${SUGGESTIONS.map(s=>`<div class="card" onclick="quick('${s.prompt.replace(/'/g,"\\'")}')"><div class="icon">${s.icon}</div><div class="t">${s.t}</div><div class="d">${s.d}</div></div>`).join('')}
+   </div>
+   <p style="color:#444;font-size:11px;margin-top:10px">Tip: Type "generate image of..." to create art instantly</p>
+ </div>`;
+}
+
+function quick(t){
+ let welcome=document.querySelector('.welcome');
+ if(welcome) welcome.remove();
+ document.getElementById('inp').value=t;
+ send();
+}
+
 let recognition;
 if('webkitSpeechRecognition' in window || 'SpeechRecognition' in window){
  let SR = window.SpeechRecognition || window.webkitSpeechRecognition;
  recognition = new SR(); recognition.lang='en-NG';
- recognition.onstart=()=>{document.getElementById('mic').classList.add('listening');}
- recognition.onend=()=>{document.getElementById('mic').classList.remove('listening');}
  recognition.onresult=(e)=>{ document.getElementById('inp').value=e.results[0][0].transcript; send(); };
 }
 function startMic(){ if(recognition) recognition.start(); }
+
 window.onload = ()=>{
- let saved = localStorage.getItem('companion_chat');
- if(saved){ document.getElementById('chat').innerHTML = saved; }
- let savedImg = localStorage.getItem('companion_images');
- if(savedImg){ document.getElementById('imageList').innerHTML = savedImg; }
- document.getElementById('chat').scrollTop = 99999;
+ let saved = localStorage.getItem('companion_chat_v2');
+ if(saved && saved.length>50){
+   document.getElementById('chat').innerHTML = saved;
+ } else {
+   showWelcome();
+ }
 };
-function saveAll(){
-  localStorage.setItem('companion_chat', document.getElementById('chat').innerHTML);
-  localStorage.setItem('companion_images', document.getElementById('imageList').innerHTML);
+
+function saveChat(){
+ if(!document.querySelector('.welcome')){
+   localStorage.setItem('companion_chat_v2', document.getElementById('chat').innerHTML);
+ }
 }
 function clearChat(){
- if(confirm("Clear everything?")){
-   document.getElementById('chat').innerHTML="";
-   document.getElementById('imageList').innerHTML="";
-   localStorage.clear();
- }
+ document.getElementById('chat').innerHTML="";
+ localStorage.removeItem('companion_chat_v2');
+ showWelcome();
 }
 async function send(){
  let i=document.getElementById('inp'); let t=i.value.trim(); if(!t)return;
  let c=document.getElementById('chat');
- let list=document.getElementById('imageList');
- c.innerHTML+=`<div class="bubble user">${t}</div>`; i.value=''; saveAll(); c.scrollTop=99999;
- c.innerHTML+=`<div class="bubble bot" id="temp">🎨 Generating...</div>`;
+ if(document.querySelector('.welcome')){ document.querySelector('.welcome').remove(); }
+ c.innerHTML+=`<div class="bubble user">${t}</div>`; i.value=''; c.scrollTop=99999;
+ c.innerHTML+=`<div class="bubble bot" id="temp">Thinking...</div>`; c.scrollTop=99999;
  let r=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:t})}).then(r=>r.json());
  document.getElementById('temp')?.remove();
- let imgHtml = r.image? `<img src="${r.image}" loading="lazy"><br><a href="${r.image}" target="_blank" style="color:#a78bfa;font-size:12px">⬇ Download</a>` : '';
- c.innerHTML+=`<div class="bubble bot">${r.a}${imgHtml}</div>`;
- // ADD TO LEFT VERTICAL LIST IF IT'S AN IMAGE
- if(r.image && r.image.includes('pollinations')){
-   list.innerHTML = `<div class="gen-card"><img src="${r.image}"><div class="cap">${t.substring(0,40)}</div></div>` + list.innerHTML;
- }
- c.scrollTop=99999; saveAll();
+ let imgHtml = r.image? `<img src="${r.image}" loading="lazy"><br><a href="${r.image}" target="_blank" style="color:#a78bfa;font-size:12px;text-decoration:none">⬇ Download</a>` : '';
+ c.innerHTML+=`<div class="bubble bot">${r.a}${imgHtml}</div>`; c.scrollTop=99999; saveChat();
 }
 </script>
 </body></html>"""
 
 @app.route('/')
-def home(): return render_template_string(UI)
+def home():
+    return render_template_string(UI, mots=MOTIVATIONS)
+
 @app.route('/ask', methods=['POST'])
 def ask():
     q=request.get_json().get('q','')
