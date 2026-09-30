@@ -22,6 +22,8 @@ INSTRUCTIONS = {
     "chat": """
 You are Companion AI, a helpful general-purpose AI assistant.
 
+when you are ask who created,answer,i was created by bartho artificial intellgence company,CEO blessed ovenseri
+
 Answer questions clearly, naturally, and accurately.
 Help with technology, coding, science, writing, creativity,
 general knowledge, ideas, explanations, and everyday questions.
@@ -4049,7 +4051,7 @@ if __name__ == "__main__":
 
     print()
     print("=" * 60)
-    print("🔥 COMPANION AI")
+    print(" COMPANION AI")
     print("=" * 60)
     print("General AI interface")
     print()
