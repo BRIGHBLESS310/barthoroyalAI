@@ -1,4067 +1,1314 @@
 from flask import Flask, request, jsonify, render_template_string
 import requests
 import urllib.parse
+import base64
+from html.parser import HTMLParser
+import re
+from bs4 import BeautifulSoup
 import os
-import json
-import time
 
 app = Flask(__name__)
 
-# ============================================================
-# COMPANION AI
-# General-purpose AI assistant
-# Everything is contained in this one Python file.
-# ============================================================
+# =========================================================
+# FAST AI - BACKEND (WITH AUTO WEB/URL SCRAPING & FILES)
+# =========================================================
 
-
-# ============================================================
-# AI INSTRUCTIONS
-# ============================================================
+EMOJI_AND_STYLE_RULES = """
+EMOJI & PERSONALITY ACCESS:
+- You have unrestricted access to the entire Unicode emoji library (😀🚀🔥✨🎯💻🎨🌍📊⚡🎉🧠🛠️❤️🙌👀🤝🏆📚🎵🍕☕).
+- Use expressive emojis naturally across responses, headings, and tables.
+- Always format comparisons, schedules, or structured data cleanly using Markdown tables (| Col 1 | Col 2 |).
+- Always wrap code snippets in fenced code blocks (e.g., ```html or ```python).
+"""
 
 INSTRUCTIONS = {
-    "chat": """
-You are Companion AI, a helpful general-purpose AI assistant.
+    "chat": f"""You are Fast, an advanced AI assistant created by Bartho Artificial Intelligence Company, CEO Blessed Ovenseri.
+When given a URL or website link in the user's message, automatically analyze its content, review it, and give a comprehensive summary or rating.
+{EMOJI_AND_STYLE_RULES}""",
 
-when you are ask who created,answer,i was created by bartho artificial intellgence company,CEO blessed ovenseri
+    "deepseek": f"""You are Fast in DeepSeek Style 🧠.
+You are excellent at deep reasoning, step-by-step thinking, coding, mathematics, and complex problem solving.
+Always think carefully before answering. Use clear structure.
+{EMOJI_AND_STYLE_RULES}""",
 
-Answer questions clearly, naturally, and accurately.
-Help with technology, coding, science, writing, creativity,
-general knowledge, ideas, explanations, and everyday questions.
+    "codex": f"""You are Fast Codex, an expert software architect and developer 💻⚡.
+Help with Python, JavaScript, HTML, CSS, Flask, APIs, and debugging. Provide complete working code.
+{EMOJI_AND_STYLE_RULES}""",
 
-Do not describe yourself as a school tutor or student assistant.
-Do not assume the user is a student.
-Keep answers useful and easy to understand.
-""",
+    "creative": f"""You are Fast Creative ✨🎨.
+Be imaginative, expressive, and great at storytelling, ideas, writing, and design suggestions.
+{EMOJI_AND_STYLE_RULES}""",
 
-    "codex": """
-You are Codex, an expert programming and software-development AI.
+    "vibe": f"""You are Fast in Vibe mode ✨🎨. Be super friendly, relaxed, and creative.
+{EMOJI_AND_STYLE_RULES}""",
 
-Help users with:
-- Python
-- JavaScript
-- HTML
-- CSS
-- Flask
-- APIs
-- databases
-- debugging
-- web development
-- game development
-- software architecture
-- command-line problems
+    "explore": f"""You are Fast Explore 🌍🔭. Help users discover tools, websites, and trends. Use live information when available.
+{EMOJI_AND_STYLE_RULES}""",
 
-When useful, provide complete working code.
-Explain errors clearly.
-Do not assume the user is a student.
-""",
-
-    "vibe": """
-You are Companion AI in Vibe mode.
-
-Be friendly, relaxed, creative, conversational, and energetic.
-Help with brainstorming, stories, ideas, names, concepts,
-creative projects, jokes, designs, apps, games, and imagination.
-
-Do not use school or student-focused language unless the user
-specifically asks about it.
-""",
-
-    "video": """
-You are a professional AI video-prompt creator.
-
-When the user asks for a video, create a detailed video-generation
-prompt describing:
-
-- subject
-- environment
-- action
-- camera movement
-- camera angle
-- lighting
-- atmosphere
-- visual style
-- motion
-- composition
-- duration
-- quality
-
-Do not claim that you actually rendered a video.
-Instead, provide a polished prompt that can be used by a video
-generation system.
-""",
-
-    "explore": """
-You are Companion AI's Explore assistant.
-
-Help users discover useful ideas, tools, projects, technologies,
-creative concepts, programming ideas, business ideas, game ideas,
-AI workflows, and interesting topics.
-
-Keep the response practical and organized.
-""",
+    "video": f"""You are a professional AI video prompt director 🎬🎥.
+{EMOJI_AND_STYLE_RULES}"""
 }
 
-
-# ============================================================
-# TEXT AI
-# ============================================================
-
-def pollinations_text(prompt):
-    """
-    Try the Pollinations text endpoint.
-    """
-
-    try:
-        encoded = urllib.parse.quote(prompt)
-
-        url = f"https://text.pollinations.ai/{encoded}"
-
-        response = requests.get(
-            url,
-            timeout=45
-        )
-
-        if response.status_code == 200:
-            text = response.text.strip()
-
-            if text:
-                return text
-
-    except Exception:
-        pass
-
-    return None
+IDENTITY_INSTRUCTION = """When asked what AI, model, or version you run on, say:
+"I run on Fast-0.0." Do not make unsupported claims about third-party implementations."""
 
 
-def pollinations_openai(prompt):
-    """
-    Try the OpenAI-compatible Pollinations endpoint.
-    """
+class BingResultsParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.results = []
+        self.current = None
+        self.nested_list_depth = 0
+        self.in_title = False
+        self.in_caption = False
+        self.in_snippet = False
 
-    try:
-        url = "https://text.pollinations.ai/openai"
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        classes = attributes.get("class", "").split()
+        if tag == "li":
+            if self.current is None and "b_algo" in classes:
+                self.current = {"title": "", "url": "", "snippet": ""}
+                self.nested_list_depth = 0
+            elif self.current is not None:
+                self.nested_list_depth += 1
+            return
+        if self.current is None:
+            return
+        if tag == "h2":
+            self.in_title = True
+        elif tag == "a" and self.in_title and not self.current["url"]:
+            self.current["url"] = attributes.get("href", "")
+        elif tag == "div" and "b_caption" in classes:
+            self.in_caption = True
+        elif tag == "p" and self.in_caption:
+            self.in_snippet = True
 
-        payload = {
-            "model": "openai",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-        }
+    def handle_endtag(self, tag):
+        if tag == "h2":
+            self.in_title = False
+        elif tag == "p" and self.in_snippet:
+            self.in_snippet = False
+        elif tag == "div" and self.in_caption:
+            self.in_caption = False
+        elif tag == "li" and self.current is not None:
+            if self.nested_list_depth:
+                self.nested_list_depth -= 1
+            else:
+                self.results.append(self.current)
+                self.current = None
 
-        response = requests.post(
-            url,
-            json=payload,
-            timeout=45
-        )
+    def handle_data(self, data):
+        if self.current is None:
+            return
+        if self.in_title:
+            self.current["title"] += data
+        elif self.in_snippet:
+            self.current["snippet"] += data
 
-        if response.status_code == 200:
 
-            data = response.json()
-
+def decode_bing_url(url):
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.hostname and parsed.hostname.endswith(".bing.com"):
+        encoded_url = urllib.parse.parse_qs(parsed.query).get("u", [""])[0]
+        if encoded_url.startswith("a1"):
+            encoded_url = encoded_url[2:]
             try:
-                return data["choices"][0]["message"]["content"]
-            except Exception:
-                pass
+                padding = "=" * (-len(encoded_url) % 4)
+                url = base64.urlsafe_b64decode(encoded_url + padding).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                return ""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return ""
+    if parsed.hostname in {"bing.com"} or parsed.hostname.endswith(".bing.com"):
+        return ""
+    return url
 
-    except Exception:
-        pass
 
-    return None
-
-
-def wikipedia_answer(question):
-    """
-    Wikipedia fallback for basic factual questions.
-    """
-
+def search_web(query):
+    query = query.strip()[:400]
+    if not query:
+        return []
     try:
-
-        encoded = urllib.parse.quote(question)
-
-        url = (
-            "https://en.wikipedia.org/api/rest_v1/page/summary/"
-            + encoded
-        )
-
         response = requests.get(
-            url,
-            timeout=15,
-            headers={
-                "User-Agent": "CompanionAI/1.0"
-            }
+            "https://www.bing.com/search",
+            params={"q": query, "setlang": "en"},
+            headers={"User-Agent": "Mozilla/5.0 (compatible; FastAI/0.0)"},
+            timeout=12
         )
+        response.raise_for_status()
+        parser = BingResultsParser()
+        parser.feed(response.text)
+        results = []
+        seen = set()
+        for r in parser.results:
+            url = decode_bing_url(r["url"])
+            title = " ".join(r["title"].split())
+            snippet = " ".join(r["snippet"].split())
+            if not url or url in seen or not title:
+                continue
+            seen.add(url)
+            results.append({"title": title[:200], "url": url, "snippet": snippet[:500]})
+            if len(results) == 4:
+                break
+        return results
+    except Exception as e:
+        print("Search error:", e)
+        return []
 
-        if response.status_code == 200:
 
-            data = response.json()
-
-            extract = data.get("extract")
-
-            if extract:
-                return extract
-
-    except Exception:
-        pass
-
-    return None
-
-
-def ollama_answer(prompt):
-    """
-    Try a locally installed Ollama model if available.
-    """
-
+def fetch_webpage_text(url):
     try:
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        res = requests.get(url, headers=headers, timeout=10)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, "html.parser")
+        for script in soup(["script", "style", "nav", "footer"]):
+            script.decompose()
+        text = soup.get_text(separator="\n", strip=True)
+        return text[:8000]
+    except Exception as e:
+        print(f"URL Fetch Error ({url}):", e)
+        return None
 
+
+def extract_urls(text):
+    url_pattern = r'https?://[^\s<>"]+|www\.[^\s<>"]+\.[^\s<>"]+'
+    return re.findall(url_pattern, text)
+
+
+def should_search_web(message):
+    text = message.lower()
+    triggers = ["latest", "current", "today", "news", "price of", "who is", "weather", "breaking", "update"]
+    return any(t in text for t in triggers)
+
+
+def pollinations_ai(prompt):
+    try:
         response = requests.post(
-            "http://127.0.0.1:11434/api/generate",
-            json={
-                "model": "llama3.2",
-                "prompt": prompt,
-                "stream": False
-            },
+            "https://text.pollinations.ai/openai",
+            json={"model": "openai", "messages": [{"role": "user", "content": prompt}]},
             timeout=60
         )
-
-        if response.status_code == 200:
-
-            data = response.json()
-
-            answer = data.get("response")
-
-            if answer:
-                return answer
-
-    except Exception:
-        pass
-
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
+    except Exception as error:
+        print("Pollinations OpenAI error:", error)
     return None
 
 
-# ============================================================
-# MAIN AI FUNCTION
-# ============================================================
+def pollinations_text(prompt):
+    try:
+        url = "https://text.pollinations.ai/" + urllib.parse.quote(prompt)
+        response = requests.get(url, timeout=60)
+        response.raise_for_status()
+        ans = response.text.strip()
+        return ans if ans else None
+    except Exception as error:
+        print("Pollinations text error:", error)
+    return None
 
-def get_answer(message, mode="chat"):
 
-    system_instruction = INSTRUCTIONS.get(
-        mode,
-        INSTRUCTIONS["chat"]
-    )
+def get_answer(message, mode="chat", context_data=""):
+    instruction = INSTRUCTIONS.get(mode, INSTRUCTIONS["chat"])
+    prompt = f"""
+{instruction}
 
-    full_prompt = f"""
-{system_instruction}
+{IDENTITY_INSTRUCTION}
+
+{context_data}
 
 USER MESSAGE:
 {message}
 
-Give the best helpful response.
+Provide a helpful, structured response with emojis and tables where appropriate.
 """
+    for provider in (pollinations_ai, pollinations_text):
+        ans = provider(prompt)
+        if ans:
+            return ans
+    return "Oops! 😅 Fast is not available right now. Please try again!"
 
-    # Try OpenAI-compatible endpoint first
-    answer = pollinations_openai(full_prompt)
-
-    if answer:
-        return answer
-
-    # Try normal text endpoint
-    answer = pollinations_text(full_prompt)
-
-    if answer:
-        return answer
-
-    # Try local Ollama
-    answer = ollama_answer(full_prompt)
-
-    if answer:
-        return answer
-
-    # Try Wikipedia
-    answer = wikipedia_answer(message)
-
-    if answer:
-        return answer
-
-    # Final fallback
-    return (
-        "I couldn't connect to an AI service right now. "
-        "Please check your internet connection or make sure "
-        "your AI service is available, then try again."
-    )
-
-
-# ============================================================
-# IMAGE GENERATION
-# ============================================================
 
 def generate_image(prompt):
-
-    encoded = urllib.parse.quote(
-        prompt,
-        safe=""
-    )
-
-    url = (
-        "https://image.pollinations.ai/prompt/"
-        + encoded
-        + "?nologo=true"
-        + "&width=1024"
-        + "&height=1024"
-    )
-
-    return url
-
-
-# ============================================================
-# VIDEO PROMPT
-# ============================================================
-
-def generate_video_prompt(prompt):
-
-    instruction = f"""
-Create a professional AI video-generation prompt from this idea:
-
-{prompt}
-
-Return a polished prompt containing:
-
-Subject:
-Environment:
-Action:
-Camera:
-Lighting:
-Atmosphere:
-Visual style:
-Motion:
-Composition:
-Quality:
-
-Make it cinematic and detailed.
-"""
-
-    answer = get_answer(
-        instruction,
-        "video"
-    )
-
-    return answer
-
-
-# ============================================================
-# SMART REQUEST
-# ============================================================
-
-def smart(message, mode):
-
-    if mode == "image":
-
-        image_url = generate_image(message)
-
-        return {
-            "type": "image",
-            "text": "Your image is ready.",
-            "image": image_url
-        }
-
-    if mode == "video":
-
-        result = generate_video_prompt(message)
-
-        return {
-            "type": "text",
-            "text": result
-        }
-
-    answer = get_answer(
-        message,
-        mode
-    )
-
-    return {
-        "type": "text",
-        "text": answer
-    }
-
-
-# ============================================================
-# MAIN HTML
-# ============================================================
-
-UI = r"""
-<!DOCTYPE html>
-<html lang="en">
-
-<head>
-
-<meta charset="UTF-8">
-
-<meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
->
-
-<title>Companion AI</title>
-
-<style>
-
-* {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-}
-
-:root {
-
-    --bg: #050505;
-    --panel: #0b0b0b;
-    --panel2: #101010;
-
-    --border: rgba(255, 255, 255, 0.08);
-
-    --text: #ffffff;
-    --muted: #969696;
-
-    --red: #ff2b2b;
-    --orange: #ff6a00;
-    --yellow: #ffb300;
-
-    --glow:
-        0 0 10px rgba(255, 55, 0, .5),
-        0 0 25px rgba(255, 55, 0, .2);
-
-    --radius: 18px;
-}
-
-body {
-
-    font-family:
-        Inter,
-        Arial,
-        Helvetica,
-        sans-serif;
-
-    background:
-        radial-gradient(
-            circle at top right,
-            rgba(255, 70, 0, .12),
-            transparent 35%
-        ),
-        radial-gradient(
-            circle at bottom left,
-            rgba(255, 0, 0, .08),
-            transparent 35%
-        ),
-        var(--bg);
-
-    color: var(--text);
-
-    height: 100vh;
-
-    overflow: hidden;
-}
-
-
-/* ============================================================
-   APP
-   ============================================================ */
-
-.app {
-
-    display: flex;
-
-    height: 100vh;
-
-    width: 100%;
-}
-
-
-/* ============================================================
-   SIDEBAR
-   ============================================================ */
-
-.sidebar {
-
-    width: 270px;
-
-    min-width: 270px;
-
-    background:
-        linear-gradient(
-            180deg,
-            #090909,
-            #050505
-        );
-
-    border-right:
-        1px solid var(--border);
-
-    display: flex;
-
-    flex-direction: column;
-
-    padding: 18px;
-
-    z-index: 20;
-}
-
-
-/* ============================================================
-   LOGO
-   ============================================================ */
-
-.logo {
-
-    display: flex;
-
-    align-items: center;
-
-    gap: 12px;
-
-    padding:
-        8px
-        8px
-        22px;
-}
-
-.logo-fire {
-
-    width: 42px;
-
-    height: 42px;
-
-    border-radius: 14px;
-
-    background:
-        linear-gradient(
-            135deg,
-            #ff2200,
-            #ff7600,
-            #ffc400
-        );
-
-    display: flex;
-
-    justify-content: center;
-
-    align-items: center;
-
-    font-size: 22px;
-
-    box-shadow: var(--glow);
-
-}
-
-.logo-name {
-
-    font-size: 20px;
-
-    font-weight: 800;
-
-    letter-spacing: .5px;
-}
-
-
-/* ============================================================
-   NAV
-   ============================================================ */
-
-.nav {
-
-    display: flex;
-
-    flex-direction: column;
-
-    gap: 7px;
-
-    flex: 1;
-}
-
-.nav-button {
-
-    border: 1px solid transparent;
-
-    background: transparent;
-
-    color: #bcbcbc;
-
-    width: 100%;
-
-    padding: 12px;
-
-    border-radius: 13px;
-
-    cursor: pointer;
-
-    display: flex;
-
-    align-items: center;
-
-    gap: 12px;
-
-    text-align: left;
-
-    font-size: 14px;
-
-    transition: .2s ease;
-}
-
-.nav-button:hover {
-
-    background:
-        rgba(255, 72, 0, .09);
-
-    color: white;
-
-    border-color:
-        rgba(255, 72, 0, .15);
-
-    transform: translateX(2px);
-}
-
-.nav-button.active {
-
-    background:
-        linear-gradient(
-            90deg,
-            rgba(255, 55, 0, .20),
-            rgba(255, 55, 0, .05)
-        );
-
-    color: white;
-
-    border-color:
-        rgba(255, 65, 0, .28);
-
-    box-shadow:
-        inset 3px 0 0 var(--orange);
-}
-
-.nav-icon {
-
-    width: 25px;
-
-    text-align: center;
-
-    font-size: 17px;
-}
-
-
-/* ============================================================
-   ACCOUNT
-   ============================================================ */
-
-.account {
-
-    border-top:
-        1px solid var(--border);
-
-    padding-top: 16px;
-
-    display: flex;
-
-    align-items: center;
-
-    gap: 10px;
-}
-
-.avatar {
-
-    width: 38px;
-
-    height: 38px;
-
-    border-radius: 50%;
-
-    background:
-        linear-gradient(
-            135deg,
-            #ff2400,
-            #ff8500
-        );
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: center;
-
-    font-weight: 800;
-
-    box-shadow:
-        0 0 15px
-        rgba(255, 70, 0, .3);
-}
-
-.account-name {
-
-    font-size: 13px;
-
-    font-weight: 700;
-}
-
-.account-status {
-
-    font-size: 11px;
-
-    color: #888;
-
-    margin-top: 2px;
-}
-
-
-/* ============================================================
-   MAIN
-   ============================================================ */
-
-.main {
-
-    flex: 1;
-
-    min-width: 0;
-
-    display: flex;
-
-    flex-direction: column;
-
-    position: relative;
-}
-
-
-/* ============================================================
-   TOP BAR
-   ============================================================ */
-
-.topbar {
-
-    height: 66px;
-
-    min-height: 66px;
-
-    border-bottom:
-        1px solid var(--border);
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: space-between;
-
-    padding:
-        0
-        22px;
-
-    background:
-        rgba(5,5,5,.85);
-
-    backdrop-filter: blur(15px);
-
-    z-index: 10;
-}
-
-.top-title {
-
-    display: flex;
-
-    align-items: center;
-
-    gap: 10px;
-
-    font-weight: 750;
-}
-
-.online {
-
-    display: flex;
-
-    align-items: center;
-
-    gap: 7px;
-
-    font-size: 11px;
-
-    color: #79ff8b;
-}
-
-.online-dot {
-
-    width: 7px;
-
-    height: 7px;
-
-    background: #39ff63;
-
-    border-radius: 50%;
-
-    box-shadow:
-        0 0 10px #39ff63;
-}
-
-
-/* ============================================================
-   MOBILE MENU
-   ============================================================ */
-
-.mobile-menu {
-
-    display: none;
-
-    border: 1px solid var(--border);
-
-    background: #111;
-
-    color: white;
-
-    width: 40px;
-
-    height: 40px;
-
-    border-radius: 12px;
-
-    cursor: pointer;
-
-    font-size: 19px;
-}
-
-
-/* ============================================================
-   CONTENT
-   ============================================================ */
-
-.content {
-
-    flex: 1;
-
-    overflow-y: auto;
-
-    padding: 30px;
-
-    scroll-behavior: smooth;
-}
-
-.page {
-
-    display: none;
-
-    max-width: 1000px;
-
-    margin: auto;
-
-    min-height: 100%;
-}
-
-.page.active {
-
-    display: block;
-}
-
-
-/* ============================================================
-   HERO
-   ============================================================ */
-
-.hero {
-
-    min-height:
-        calc(100vh - 160px);
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: center;
-
-    text-align: center;
-
-    flex-direction: column;
-}
-
-.hero-logo {
-
-    width: 75px;
-
-    height: 75px;
-
-    border-radius: 24px;
-
-    background:
-        linear-gradient(
-            135deg,
-            #ff1900,
-            #ff6500,
-            #ffc000
-        );
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: center;
-
-    font-size: 38px;
-
-    margin-bottom: 22px;
-
-    box-shadow:
-        0 0 20px rgba(255,70,0,.6),
-        0 0 60px rgba(255,40,0,.2);
-}
-
-.hero h1 {
-
-    font-size:
-        clamp(30px, 5vw, 52px);
-
-    line-height: 1.05;
-
-    margin-bottom: 15px;
-}
-
-.gradient-text {
-
-    background:
-        linear-gradient(
-            90deg,
-            #fff,
-            #ff6a00,
-            #ff2600
-        );
-
-    -webkit-background-clip: text;
-
-    background-clip: text;
-
-    color: transparent;
-}
-
-.hero p {
-
-    color: var(--muted);
-
-    max-width: 620px;
-
-    line-height: 1.7;
-
-    margin-bottom: 30px;
-}
-
-
-/* ============================================================
-   CHAT
-   ============================================================ */
-
-.chat-page {
-
-    height: calc(100vh - 126px);
-
-    display: flex;
-
-    flex-direction: column;
-}
-
-.chat-header {
-
-    margin-bottom: 18px;
-}
-
-.chat-header h2 {
-
-    font-size: 26px;
-
-    margin-bottom: 6px;
-}
-
-.chat-header p {
-
-    color: var(--muted);
-
-    font-size: 13px;
-}
-
-.messages {
-
-    flex: 1;
-
-    overflow-y: auto;
-
-    padding:
-        10px
-        0
-        25px;
-
-    display: flex;
-
-    flex-direction: column;
-
-    gap: 18px;
-}
-
-.message {
-
-    display: flex;
-
-    gap: 12px;
-
-    max-width: 850px;
-}
-
-.message.user {
-
-    margin-left: auto;
-
-    flex-direction: row-reverse;
-}
-
-.message-avatar {
-
-    width: 36px;
-
-    min-width: 36px;
-
-    height: 36px;
-
-    border-radius: 12px;
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: center;
-
-    background:
-        #151515;
-
-    border:
-        1px solid var(--border);
-}
-
-.message.user .message-avatar {
-
-    background:
-        linear-gradient(
-            135deg,
-            #ff2700,
-            #ff7800
-        );
-}
-
-.bubble {
-
-    padding: 13px 16px;
-
-    border-radius: 16px;
-
-    background:
-        #101010;
-
-    border:
-        1px solid var(--border);
-
-    line-height: 1.65;
-
-    font-size: 14px;
-
-    white-space: pre-wrap;
-
-    max-width: min(760px, 75vw);
-}
-
-.message.user .bubble {
-
-    background:
-        linear-gradient(
-            135deg,
-            rgba(255,55,0,.18),
-            rgba(255,110,0,.08)
-        );
-
-    border-color:
-        rgba(255,70,0,.22);
-}
-
-
-/* ============================================================
-   COMPOSER
-   ============================================================ */
-
-.composer-area {
-
-    padding-top: 8px;
-
-    border-top:
-        1px solid var(--border);
-}
-
-.composer {
-
-    display: flex;
-
-    align-items: flex-end;
-
-    gap: 10px;
-
-    background:
-        #0d0d0d;
-
-    border:
-        1px solid #252525;
-
-    border-radius: 18px;
-
-    padding: 10px;
-
-    transition: .2s;
-}
-
-.composer:focus-within {
-
-    border-color:
-        rgba(255,70,0,.5);
-
-    box-shadow:
-        0 0 20px
-        rgba(255,60,0,.08);
-}
-
-textarea {
-
-    flex: 1;
-
-    resize: none;
-
-    border: none;
-
-    outline: none;
-
-    background: transparent;
-
-    color: white;
-
-    min-height: 42px;
-
-    max-height: 160px;
-
-    padding: 11px;
-
-    font-family: inherit;
-
-    font-size: 14px;
-}
-
-textarea::placeholder {
-
-    color: #666;
-}
-
-.send-button {
-
-    width: 45px;
-
-    height: 45px;
-
-    border: none;
-
-    border-radius: 14px;
-
-    background:
-        linear-gradient(
-            135deg,
-            #ff2200,
-            #ff7600
-        );
-
-    color: white;
-
-    cursor: pointer;
-
-    font-size: 18px;
-
-    box-shadow:
-        0 0 15px
-        rgba(255,70,0,.25);
-
-    transition: .2s;
-}
-
-.send-button:hover {
-
-    transform: scale(1.05);
-
-    box-shadow:
-        0 0 25px
-        rgba(255,70,0,.5);
-}
-
-.send-button:disabled {
-
-    opacity: .5;
-
-    cursor: not-allowed;
-}
-
-.status {
-
-    text-align: center;
-
-    color: #666;
-
-    font-size: 11px;
-
-    padding: 8px;
-}
-
-
-/* ============================================================
-   QUICK ACTIONS
-   ============================================================ */
-
-.quick-actions {
-
-    display: flex;
-
-    gap: 8px;
-
-    overflow-x: auto;
-
-    padding:
-        12px
-        0
-        4px;
-}
-
-.quick-button {
-
-    white-space: nowrap;
-
-    border:
-        1px solid #242424;
-
-    background:
-        #0d0d0d;
-
-    color: #aaa;
-
-    padding:
-        9px
-        12px;
-
-    border-radius: 12px;
-
-    cursor: pointer;
-
-    font-size: 12px;
-
-    transition: .2s;
-}
-
-.quick-button:hover {
-
-    color: white;
-
-    border-color:
-        rgba(255,70,0,.4);
-
-    background:
-        rgba(255,70,0,.08);
-}
-
-
-/* ============================================================
-   CARDS
-   ============================================================ */
-
-.section-title {
-
-    font-size: 30px;
-
-    margin-bottom: 8px;
-}
-
-.section-description {
-
-    color: var(--muted);
-
-    margin-bottom: 25px;
-
-    line-height: 1.6;
-}
-
-.grid {
-
-    display: grid;
-
-    grid-template-columns:
-        repeat(
-            auto-fit,
-            minmax(220px, 1fr)
-        );
-
-    gap: 15px;
-}
-
-.card {
-
-    background:
-        linear-gradient(
-            145deg,
-            #111,
-            #090909
-        );
-
-    border:
-        1px solid var(--border);
-
-    border-radius: 18px;
-
-    padding: 20px;
-
-    cursor: pointer;
-
-    transition: .2s;
-}
-
-.card:hover {
-
-    transform: translateY(-3px);
-
-    border-color:
-        rgba(255,70,0,.35);
-
-    box-shadow:
-        0 10px 35px
-        rgba(0,0,0,.35);
-}
-
-.card-icon {
-
-    font-size: 26px;
-
-    margin-bottom: 15px;
-}
-
-.card h3 {
-
-    font-size: 16px;
-
-    margin-bottom: 7px;
-}
-
-.card p {
-
-    color: #888;
-
-    line-height: 1.5;
-
-    font-size: 13px;
-}
-
-
-/* ============================================================
-   IMAGE PAGE
-   ============================================================ */
-
-.image-box {
-
-    max-width: 750px;
-}
-
-.big-input {
-
-    width: 100%;
-
-    min-height: 130px;
-
-    background:
-        #0d0d0d;
-
-    border:
-        1px solid #252525;
-
-    border-radius: 18px;
-
-    padding: 18px;
-
-    color: white;
-
-    outline: none;
-
-    resize: vertical;
-
-    font-family: inherit;
-
-    margin-bottom: 12px;
-}
-
-.primary-button {
-
-    border: none;
-
-    border-radius: 13px;
-
-    padding:
-        12px
-        18px;
-
-    background:
-        linear-gradient(
-            135deg,
-            #ff2100,
-            #ff7800
-        );
-
-    color: white;
-
-    font-weight: 700;
-
-    cursor: pointer;
-
-    box-shadow:
-        0 0 20px
-        rgba(255,70,0,.2);
-}
-
-.primary-button:hover {
-
-    filter: brightness(1.12);
-}
-
-.generated-image {
-
-    margin-top: 25px;
-
-    width: 100%;
-
-    border-radius: 20px;
-
-    border:
-        1px solid var(--border);
-
-    display: none;
-}
-
-
-/* ============================================================
-   LIBRARY
-   ============================================================ */
-
-.library-list {
-
-    display: flex;
-
-    flex-direction: column;
-
-    gap: 10px;
-}
-
-.library-item {
-
-    background:
-        #0e0e0e;
-
-    border:
-        1px solid var(--border);
-
-    border-radius: 15px;
-
-    padding: 15px;
-
-    cursor: pointer;
-}
-
-.library-item:hover {
-
-    border-color:
-        rgba(255,70,0,.35);
-}
-
-.library-title {
-
-    font-weight: 700;
-
-    margin-bottom: 5px;
-
-    white-space: nowrap;
-
-    overflow: hidden;
-
-    text-overflow: ellipsis;
-}
-
-.library-date {
-
-    font-size: 11px;
-
-    color: #666;
-}
-
-.empty {
-
-    color: #666;
-
-    padding: 35px;
-
-    text-align: center;
-
-    border:
-        1px dashed #252525;
-
-    border-radius: 15px;
-}
-
-
-/* ============================================================
-   SETTINGS
-   ============================================================ */
-
-.setting {
-
-    background:
-        #0e0e0e;
-
-    border:
-        1px solid var(--border);
-
-    padding: 18px;
-
-    border-radius: 15px;
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: space-between;
-
-    gap: 20px;
-
-    margin-bottom: 10px;
-}
-
-.setting h3 {
-
-    font-size: 14px;
-
-    margin-bottom: 4px;
-}
-
-.setting p {
-
-    font-size: 12px;
-
-    color: #777;
-}
-
-.toggle {
-
-    width: 48px;
-
-    height: 26px;
-
-    border-radius: 20px;
-
-    background: #292929;
-
-    position: relative;
-
-    cursor: pointer;
-}
-
-.toggle.on {
-
-    background:
-        linear-gradient(
-            90deg,
-            #ff2600,
-            #ff7900
-        );
-}
-
-.toggle-circle {
-
-    width: 20px;
-
-    height: 20px;
-
-    border-radius: 50%;
-
-    background: white;
-
-    position: absolute;
-
-    top: 3px;
-
-    left: 4px;
-
-    transition: .2s;
-}
-
-.toggle.on .toggle-circle {
-
-    left: 24px;
-}
-
-
-/* ============================================================
-   TOAST
-   ============================================================ */
-
-.toast {
-
-    position: fixed;
-
-    bottom: 25px;
-
-    right: 25px;
-
-    background:
-        #151515;
-
-    border:
-        1px solid rgba(255,70,0,.3);
-
-    box-shadow:
-        0 10px 35px rgba(0,0,0,.5);
-
-    border-radius: 14px;
-
-    padding:
-        13px
-        17px;
-
-    font-size: 13px;
-
-    opacity: 0;
-
-    transform:
-        translateY(20px);
-
-    pointer-events: none;
-
-    transition: .25s;
-
-    z-index: 100;
-}
-
-.toast.show {
-
-    opacity: 1;
-
-    transform:
-        translateY(0);
-}
-
-
-/* ============================================================
-   MOBILE
-   ============================================================ */
-
-@media(max-width: 800px) {
-
-    .sidebar {
-
-        position: fixed;
-
-        left: -290px;
-
-        top: 0;
-
-        bottom: 0;
-
-        transition: .25s;
-
-        box-shadow:
-            10px 0 40px rgba(0,0,0,.5);
-    }
-
-    .sidebar.open {
-
-        left: 0;
-    }
-
-    .mobile-menu {
-
-        display: block;
-    }
-
-    .topbar {
-
-        padding:
-            0
-            14px;
-    }
-
-    .content {
-
-        padding: 20px 14px;
-    }
-
-    .hero {
-
-        min-height:
-            calc(100vh - 150px);
-    }
-
-    .bubble {
-
-        max-width: 82vw;
-    }
-
-    .chat-page {
-
-        height:
-            calc(100vh - 106px);
-    }
-}
-
-
-/* ============================================================
-   SMALL PHONES
-   ============================================================ */
-
-@media(max-width: 450px) {
-
-    .logo {
-
-        padding-bottom: 15px;
-    }
-
-    .hero h1 {
-
-        font-size: 32px;
-    }
-
-    .hero p {
-
-        font-size: 13px;
-    }
-
-    .section-title {
-
-        font-size: 25px;
-    }
-
-    .message-avatar {
-
-        width: 32px;
-
-        min-width: 32px;
-
-        height: 32px;
-    }
-
-    .bubble {
-
-        font-size: 13px;
-
-        padding: 11px 13px;
-    }
-
-    .quick-button {
-
-        font-size: 11px;
-    }
-}
-
-</style>
-
-</head>
-
-
-<body>
-
-<div class="app">
-
-
-    <!-- =====================================================
-         SIDEBAR
-         ===================================================== -->
-
-    <aside class="sidebar" id="sidebar">
-
-        <div class="logo">
-
-            <div class="logo-fire">
-                🔥
-            </div>
-
-            <div class="logo-name">
-                Companion AI
-            </div>
-
-        </div>
-
-
-        <nav class="nav">
-
-            <button
-                class="nav-button active"
-                data-page="chat"
-            >
-                <span class="nav-icon">💬</span>
-                <span>Chat</span>
-            </button>
-
-
-            <button
-                class="nav-button"
-                data-page="codex"
-            >
-                <span class="nav-icon">💻</span>
-                <span>Codex</span>
-            </button>
-
-
-            <button
-                class="nav-button"
-                data-page="image"
-            >
-                <span class="nav-icon">🖼️</span>
-                <span>Generate Image</span>
-            </button>
-
-
-            <button
-                class="nav-button"
-                data-page="video"
-            >
-                <span class="nav-icon">🎬</span>
-                <span>Generate Video</span>
-            </button>
-
-
-            <button
-                class="nav-button"
-                data-page="vibe"
-            >
-                <span class="nav-icon">✨</span>
-                <span>Vibe</span>
-            </button>
-
-
-            <button
-                class="nav-button"
-                data-page="library"
-            >
-                <span class="nav-icon">📚</span>
-                <span>Library</span>
-            </button>
-
-
-            <button
-                class="nav-button"
-                data-page="explore"
-            >
-                <span class="nav-icon">🌎</span>
-                <span>Explore</span>
-            </button>
-
-
-            <button
-                class="nav-button"
-                data-page="settings"
-            >
-                <span class="nav-icon">⚙️</span>
-                <span>Settings</span>
-            </button>
-
-
-            <button
-                class="nav-button"
-                id="newChatButton"
-            >
-                <span class="nav-icon">＋</span>
-                <span>New Chat</span>
-            </button>
-
-        </nav>
-
-
-        <div class="account">
-
-            <div class="avatar">
-                C
-            </div>
-
-            <div>
-
-                <div class="account-name">
-                    Companion User
-                </div>
-
-                <div class="account-status">
-                    Free account
-                </div>
-
-            </div>
-
-        </div>
-
-    </aside>
-
-
-
-    <!-- =====================================================
-         MAIN
-         ===================================================== -->
-
-    <main class="main">
-
-
-        <!-- TOP BAR -->
-
-        <header class="topbar">
-
-            <div style="display:flex;align-items:center;gap:12px;">
-
-                <button
-                    class="mobile-menu"
-                    id="mobileMenu"
-                >
-                    ☰
-                </button>
-
-                <div class="top-title">
-
-                    <span id="pageTitle">
-                        Companion AI
-                    </span>
-
-                </div>
-
-            </div>
-
-
-            <div class="online">
-
-                <span class="online-dot"></span>
-
-                Online
-
-            </div>
-
-        </header>
-
-
-
-        <!-- CONTENT -->
-
-        <div class="content">
-
-
-            <!-- =================================================
-                 CHAT PAGE
-                 ================================================= -->
-
-            <section
-                class="page active"
-                id="page-chat"
-            >
-
-                <div class="chat-page">
-
-                    <div class="chat-header">
-
-                        <h2>
-                            What can I help you with?
-                        </h2>
-
-                        <p>
-                            Ask questions, code, create, explore,
-                            or just have a conversation.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="messages"
-                        id="messages"
-                    >
-
-                        <div class="message">
-
-                            <div class="message-avatar">
-                                🔥
-                            </div>
-
-                            <div class="bubble">
-                                Hello! I'm Companion AI. What would you like to do?
-                            </div>
-
-                        </div>
-
-                    </div>
-
-
-                    <div class="composer-area">
-
-                        <div class="quick-actions">
-
-                            <button
-                                class="quick-button"
-                                data-prompt="Explain artificial intelligence in simple terms."
-                            >
-                                🤖 Explain AI
-                            </button>
-
-                            <button
-                                class="quick-button"
-                                data-prompt="Help me build a modern website."
-                            >
-                                🌐 Build a website
-                            </button>
-
-                            <button
-                                class="quick-button"
-                                data-prompt="Write a Python program that is useful and interesting."
-                            >
-                                🐍 Write Python
-                            </button>
-
-                            <button
-                                class="quick-button"
-                                data-prompt="Give me three creative project ideas."
-                            >
-                                💡 Give me ideas
-                            </button>
-
-                        </div>
-
-
-                        <div class="composer">
-
-                            <textarea
-                                id="chatInput"
-                                rows="1"
-                                placeholder="Message Companion AI..."
-                            ></textarea>
-
-                            <button
-                                class="send-button"
-                                id="sendButton"
-                            >
-                                ➤
-                            </button>
-
-                        </div>
-
-
-                        <div class="status" id="status">
-                            Companion AI can make mistakes. Check important information.
-                        </div>
-
-                    </div>
-
-                </div>
-
-            </section>
-
-
-
-            <!-- =================================================
-                 CODEX
-                 ================================================= -->
-
-            <section
-                class="page"
-                id="page-codex"
-            >
-
-                <h1 class="section-title">
-                    💻 Codex
-                </h1>
-
-                <p class="section-description">
-                    Get help with programming, debugging,
-                    websites, APIs, applications, and software.
-                </p>
-
-
-                <div class="grid">
-
-                    <div
-                        class="card"
-                        data-codex-prompt="Create a responsive HTML and CSS website."
-                    >
-
-                        <div class="card-icon">
-                            🌐
-                        </div>
-
-                        <h3>
-                            Web Development
-                        </h3>
-
-                        <p>
-                            Build responsive websites with HTML,
-                            CSS, JavaScript, and Flask.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="card"
-                        data-codex-prompt="Write a useful Python application."
-                    >
-
-                        <div class="card-icon">
-                            🐍
-                        </div>
-
-                        <h3>
-                            Python
-                        </h3>
-
-                        <p>
-                            Create Python programs and applications.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="card"
-                        data-codex-prompt="Help me debug this code and explain the problem."
-                    >
-
-                        <div class="card-icon">
-                            🐛
-                        </div>
-
-                        <h3>
-                            Debugging
-                        </h3>
-
-                        <p>
-                            Find problems in your code and explain
-                            how to fix them.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="card"
-                        data-codex-prompt="Explain how APIs work and show me an example."
-                    >
-
-                        <div class="card-icon">
-                            🔌
-                        </div>
-
-                        <h3>
-                            APIs
-                        </h3>
-
-                        <p>
-                            Work with APIs, requests, JSON,
-                            authentication, and web services.
-                        </p>
-
-                    </div>
-
-                </div>
-
-            </section>
-
-
-
-            <!-- =================================================
-                 IMAGE
-                 ================================================= -->
-
-            <section
-                class="page"
-                id="page-image"
-            >
-
-                <h1 class="section-title">
-                    🖼️ Generate Image
-                </h1>
-
-                <p class="section-description">
-                    Describe the image you want to create.
-                </p>
-
-
-                <div class="image-box">
-
-                    <textarea
-                        id="imagePrompt"
-                        class="big-input"
-                        placeholder="Example: A futuristic city at night with glowing neon buildings, cinematic lighting..."
-                    ></textarea>
-
-
-                    <button
-                        class="primary-button"
-                        id="generateImageButton"
-                    >
-                        Generate Image
-                    </button>
-
-
-                    <div
-                        id="imageStatus"
-                        style="
-                            color:#777;
-                            font-size:12px;
-                            margin-top:12px;
-                        "
-                    ></div>
-
-
-                    <img
-                        id="generatedImage"
-                        class="generated-image"
-                        alt="Generated image"
-                    >
-
-                </div>
-
-            </section>
-
-
-
-            <!-- =================================================
-                 VIDEO
-                 ================================================= -->
-
-            <section
-                class="page"
-                id="page-video"
-            >
-
-                <h1 class="section-title">
-                    🎬 Generate Video
-                </h1>
-
-                <p class="section-description">
-                    Describe your video idea and Companion AI
-                    will create a detailed generation prompt.
-                </p>
-
-
-                <div class="image-box">
-
-                    <textarea
-                        id="videoPrompt"
-                        class="big-input"
-                        placeholder="Example: A futuristic sports car driving through a neon city during a rainstorm..."
-                    ></textarea>
-
-
-                    <button
-                        class="primary-button"
-                        id="generateVideoButton"
-                    >
-                        Create Video Prompt
-                    </button>
-
-
-                    <div
-                        id="videoResult"
-                        class="bubble"
-                        style="
-                            margin-top:20px;
-                            display:none;
-                            max-width:none;
-                        "
-                    ></div>
-
-                </div>
-
-            </section>
-
-
-
-            <!-- =================================================
-                 VIBE
-                 ================================================= -->
-
-            <section
-                class="page"
-                id="page-vibe"
-            >
-
-                <h1 class="section-title">
-                    ✨ Vibe
-                </h1>
-
-                <p class="section-description">
-                    A more relaxed and creative Companion AI experience.
-                </p>
-
-
-                <div class="grid">
-
-                    <div
-                        class="card"
-                        data-vibe-prompt="Give me five creative ideas for a futuristic app."
-                    >
-
-                        <div class="card-icon">
-                            🚀
-                        </div>
-
-                        <h3>
-                            Creative Ideas
-                        </h3>
-
-                        <p>
-                            Generate unusual and interesting ideas.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="card"
-                        data-vibe-prompt="Create an original futuristic character concept."
-                    >
-
-                        <div class="card-icon">
-                            🧙
-                        </div>
-
-                        <h3>
-                            Characters
-                        </h3>
-
-                        <p>
-                            Create characters and concepts.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="card"
-                        data-vibe-prompt="Give me an original game concept with interesting gameplay."
-                    >
-
-                        <div class="card-icon">
-                            🎮
-                        </div>
-
-                        <h3>
-                            Game Ideas
-                        </h3>
-
-                        <p>
-                            Explore game concepts and mechanics.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="card"
-                        data-vibe-prompt="Give me a creative idea for a futuristic AI project."
-                    >
-
-                        <div class="card-icon">
-                            🤖
-                        </div>
-
-                        <h3>
-                            AI Projects
-                        </h3>
-
-                        <p>
-                            Brainstorm AI-powered projects.
-                        </p>
-
-                    </div>
-
-                </div>
-
-            </section>
-
-
-
-            <!-- =================================================
-                 LIBRARY
-                 ================================================= -->
-
-            <section
-                class="page"
-                id="page-library"
-            >
-
-                <h1 class="section-title">
-                    📚 Library
-                </h1>
-
-                <p class="section-description">
-                    Your saved conversations are stored in your browser.
-                </p>
-
-
-                <div
-                    class="library-list"
-                    id="libraryList"
-                ></div>
-
-            </section>
-
-
-
-            <!-- =================================================
-                 EXPLORE
-                 ================================================= -->
-
-            <section
-                class="page"
-                id="page-explore"
-            >
-
-                <h1 class="section-title">
-                    🌎 Explore
-                </h1>
-
-                <p class="section-description">
-                    Explore ideas and useful AI-powered workflows.
-                </p>
-
-
-                <div class="grid">
-
-                    <div
-                        class="card"
-                        data-explore-prompt="Give me ten interesting technology project ideas."
-                    >
-
-                        <div class="card-icon">
-                            🧪
-                        </div>
-
-                        <h3>
-                            Technology
-                        </h3>
-
-                        <p>
-                            Discover technology project ideas.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="card"
-                        data-explore-prompt="Give me five interesting AI application ideas."
-                    >
-
-                        <div class="card-icon">
-                            🤖
-                        </div>
-
-                        <h3>
-                            AI
-                        </h3>
-
-                        <p>
-                            Discover ways AI can be used.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="card"
-                        data-explore-prompt="Give me five interesting game development project ideas."
-                    >
-
-                        <div class="card-icon">
-                            🎮
-                        </div>
-
-                        <h3>
-                            Games
-                        </h3>
-
-                        <p>
-                            Explore game development concepts.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="card"
-                        data-explore-prompt="Give me creative ideas for a modern web application."
-                    >
-
-                        <div class="card-icon">
-                            💡
-                        </div>
-
-                        <h3>
-                            Apps
-                        </h3>
-
-                        <p>
-                            Discover new application ideas.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="card"
-                        data-explore-prompt="Explain five emerging technologies in simple language."
-                    >
-
-                        <div class="card-icon">
-                            ⚡
-                        </div>
-
-                        <h3>
-                            Discover
-                        </h3>
-
-                        <p>
-                            Explore interesting technologies.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="card"
-                        data-explore-prompt="Give me ideas for a futuristic AI assistant."
-                    >
-
-                        <div class="card-icon">
-                            🔥
-                        </div>
-
-                        <h3>
-                            Build
-                        </h3>
-
-                        <p>
-                            Turn ideas into projects.
-                        </p>
-
-                    </div>
-
-                </div>
-
-            </section>
-
-
-
-            <!-- =================================================
-                 SETTINGS
-                 ================================================= -->
-
-            <section
-                class="page"
-                id="page-settings"
-            >
-
-                <h1 class="section-title">
-                    ⚙️ Settings
-                </h1>
-
-                <p class="section-description">
-                    Customize your Companion AI experience.
-                </p>
-
-
-                <div class="setting">
-
-                    <div>
-
-                        <h3>
-                            Fire Neon Theme
-                        </h3>
-
-                        <p>
-                            Use the fire/neon interface.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="toggle on"
-                        id="themeToggle"
-                    >
-
-                        <div class="toggle-circle"></div>
-
-                    </div>
-
-                </div>
-
-
-                <div class="setting">
-
-                    <div>
-
-                        <h3>
-                            Save Conversations
-                        </h3>
-
-                        <p>
-                            Save chats locally in your browser.
-                        </p>
-
-                    </div>
-
-
-                    <div
-                        class="toggle on"
-                        id="saveToggle"
-                    >
-
-                        <div class="toggle-circle"></div>
-
-                    </div>
-
-                </div>
-
-
-                <div class="setting">
-
-                    <div>
-
-                        <h3>
-                            Clear Library
-                        </h3>
-
-                        <p>
-                            Delete all locally saved conversations.
-                        </p>
-
-                    </div>
-
-
-                    <button
-                        class="primary-button"
-                        id="clearLibrary"
-                    >
-                        Clear
-                    </button>
-
-                </div>
-
-
-                <div
-                    class="setting"
-                    style="display:block;"
-                >
-
-                    <h3>
-                        About Companion AI
-                    </h3>
-
-                    <p style="margin-top:8px;line-height:1.6;">
-                        Companion AI is a general-purpose AI interface
-                        designed for conversation, coding, creativity,
-                        image generation, video prompt creation,
-                        and exploration.
-                    </p>
-
-                </div>
-
-            </section>
-
-
-        </div>
-
-    </main>
-
-</div>
-
-
-<div
-    class="toast"
-    id="toast"
->
-    Saved
-</div>
-
-
-<script>
-
-
-// ============================================================
-// STATE
-// ============================================================
-
-let currentMode = "chat";
-
-let currentMessages = [];
-
-let saveConversations = true;
-
-
-// ============================================================
-// ELEMENTS
-// ============================================================
-
-const sidebar =
-    document.getElementById("sidebar");
-
-const mobileMenu =
-    document.getElementById("mobileMenu");
-
-const pageTitle =
-    document.getElementById("pageTitle");
-
-const messages =
-    document.getElementById("messages");
-
-const chatInput =
-    document.getElementById("chatInput");
-
-const sendButton =
-    document.getElementById("sendButton");
-
-const status =
-    document.getElementById("status");
-
-
-// ============================================================
-// PAGE TITLES
-// ============================================================
-
-const titles = {
-
-    chat: "Companion AI",
-
-    codex: "Codex",
-
-    image: "Generate Image",
-
-    video: "Generate Video",
-
-    vibe: "Vibe",
-
-    library: "Library",
-
-    explore: "Explore",
-
-    settings: "Settings"
-
-};
-
-
-// ============================================================
-// NAVIGATION
-// ============================================================
-
-function openPage(page) {
-
-    currentMode = page;
-
-    document
-        .querySelectorAll(".page")
-        .forEach(function(el) {
-
-            el.classList.remove("active");
-
-        });
-
-
-    const target =
-        document.getElementById(
-            "page-" + page
-        );
-
-    if (target) {
-
-        target.classList.add("active");
-
-    }
-
-
-    document
-        .querySelectorAll(".nav-button[data-page]")
-        .forEach(function(button) {
-
-            button.classList.remove("active");
-
-            if (
-                button.dataset.page === page
-            ) {
-
-                button.classList.add("active");
-
-            }
-
-        });
-
-
-    pageTitle.textContent =
-        titles[page] || "Companion AI";
-
-
-    sidebar.classList.remove("open");
-
-
-    if (page === "library") {
-
-        renderLibrary();
-
-    }
-
-}
-
-
-// ============================================================
-// NAV BUTTONS
-// ============================================================
-
-document
-    .querySelectorAll(".nav-button[data-page]")
-    .forEach(function(button) {
-
-        button.addEventListener(
-            "click",
-            function() {
-
-                openPage(
-                    button.dataset.page
-                );
-
-            }
-        );
-
-    });
-
-
-// ============================================================
-// MOBILE MENU
-// ============================================================
-
-mobileMenu.addEventListener(
-    "click",
-    function() {
-
-        sidebar.classList.toggle(
-            "open"
-        );
-
-    }
-);
-
-
-// ============================================================
-// TOAST
-// ============================================================
-
-function toast(message) {
-
-    const element =
-        document.getElementById("toast");
-
-    element.textContent = message;
-
-    element.classList.add("show");
-
-    setTimeout(
-        function() {
-
-            element.classList.remove(
-                "show"
-            );
-
+    response = requests.post(
+        "https://stablehorde.net/api/v2/generate/async",
+        headers={"apikey": "0000000000", "Client-Agent": "BarthoRoyalAI:1.0"},
+        json={
+            "prompt": prompt,
+            "params": {"width": 512, "height": 512, "steps": 20, "n": 1},
+            "censor_nsfw": True
         },
-        2200
-    );
-
-}
-
-
-// ============================================================
-// ADD MESSAGE
-// ============================================================
-
-function addMessage(
-    text,
-    type = "assistant"
-) {
-
-    const message =
-        document.createElement("div");
-
-    message.className =
-        "message " + type;
-
-
-    const avatar =
-        document.createElement("div");
-
-    avatar.className =
-        "message-avatar";
-
-    avatar.textContent =
-        type === "user"
-            ? "U"
-            : "🔥";
-
-
-    const bubble =
-        document.createElement("div");
-
-    bubble.className =
-        "bubble";
-
-    bubble.textContent =
-        text;
-
-
-    message.appendChild(
-        avatar
-    );
-
-    message.appendChild(
-        bubble
-    );
-
-    messages.appendChild(
-        message
-    );
-
-
-    messages.scrollTop =
-        messages.scrollHeight;
-
-
-    currentMessages.push({
-
-        role:
-            type === "user"
-                ? "user"
-                : "assistant",
-
-        content:
-            text
-
-    });
-
-}
-
-
-// ============================================================
-// SEND CHAT
-// ============================================================
-
-async function sendMessage(
-    customText = null,
-    mode = "chat"
-) {
-
-    let message =
-        customText !== null
-            ? customText
-            : chatInput.value.trim();
-
-
-    if (!message) {
-
-        return;
-
-    }
-
-
-    openPage("chat");
-
-
-    addMessage(
-        message,
-        "user"
-    );
-
-
-    if (
-        customText === null
-    ) {
-
-        chatInput.value = "";
-
-    }
-
-
-    chatInput.style.height =
-        "42px";
-
-
-    sendButton.disabled =
-        true;
-
-
-    status.textContent =
-        "Companion AI is thinking...";
-
-
-    const loading =
-        document.createElement("div");
-
-    loading.className =
-        "message";
-
-    loading.id =
-        "loadingMessage";
-
-
-    loading.innerHTML = `
-        <div class="message-avatar">🔥</div>
-        <div class="bubble">Thinking...</div>
-    `;
-
-
-    messages.appendChild(
-        loading
-    );
-
-
-    messages.scrollTop =
-        messages.scrollHeight;
-
-
-    try {
-
-        const response =
-            await fetch(
-                "/ask",
-                {
-                    method: "POST",
-
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body: JSON.stringify({
-
-                        message:
-                            message,
-
-                        mode:
-                            mode
-
-                    })
-
-                }
-            );
-
-
-        const data =
-            await response.json();
-
-
-        const loader =
-            document.getElementById(
-                "loadingMessage"
-            );
-
-
-        if (loader) {
-
-            loader.remove();
-
-        }
-
-
-        if (
-            data.type === "image"
-        ) {
-
-            addMessage(
-                data.text,
-                "assistant"
-            );
-
-            const image =
-                document.createElement(
-                    "img"
-                );
-
-            image.src =
-                data.image;
-
-            image.style.width =
-                "min(600px, 80vw)";
-
-            image.style.borderRadius =
-                "18px";
-
-            image.style.marginTop =
-                "10px";
-
-            messages.appendChild(
-                image
-            );
-
-        } else {
-
-            addMessage(
-                data.text,
-                "assistant"
-            );
-
-        }
-
-
-        status.textContent =
-            "Ready";
-
-
-        if (
-            saveConversations
-        ) {
-
-            saveCurrentConversation();
-
-        }
-
-    }
-    catch (error) {
-
-        const loader =
-            document.getElementById(
-                "loadingMessage"
-            );
-
-
-        if (loader) {
-
-            loader.remove();
-
-        }
-
-
-        addMessage(
-            "Something went wrong while connecting to the AI service.",
-            "assistant"
-        );
-
-
-        status.textContent =
-            "Connection error";
-
-    }
-
-
-    sendButton.disabled =
-        false;
-
-}
-
-
-// ============================================================
-// SEND BUTTON
-// ============================================================
-
-sendButton.addEventListener(
-    "click",
-    function() {
-
-        sendMessage();
-
-    }
-);
-
-
-// ============================================================
-// ENTER TO SEND
-// ============================================================
-
-chatInput.addEventListener(
-    "keydown",
-    function(event) {
-
-        if (
-            event.key === "Enter" &&
-            !event.shiftKey
-        ) {
-
-            event.preventDefault();
-
-            sendMessage();
-
-        }
-
-    }
-);
-
-
-// ============================================================
-// TEXTAREA AUTO RESIZE
-// ============================================================
-
-chatInput.addEventListener(
-    "input",
-    function() {
-
-        chatInput.style.height =
-            "42px";
-
-        chatInput.style.height =
-            Math.min(
-                chatInput.scrollHeight,
-                160
-            ) + "px";
-
-    }
-);
-
-
-// ============================================================
-// QUICK BUTTONS
-// ============================================================
-
-document
-    .querySelectorAll(".quick-button")
-    .forEach(function(button) {
-
-        button.addEventListener(
-            "click",
-            function() {
-
-                sendMessage(
-                    button.dataset.prompt,
-                    "chat"
-                );
-
-            }
-        );
-
-    });
-
-
-// ============================================================
-// CODEX CARDS
-// ============================================================
-
-document
-    .querySelectorAll("[data-codex-prompt]")
-    .forEach(function(card) {
-
-        card.addEventListener(
-            "click",
-            function() {
-
-                sendMessage(
-                    card.dataset.codexPrompt,
-                    "codex"
-                );
-
-            }
-        );
-
-    });
-
-
-// ============================================================
-// VIBE CARDS
-// ============================================================
-
-document
-    .querySelectorAll("[data-vibe-prompt]")
-    .forEach(function(card) {
-
-        card.addEventListener(
-            "click",
-            function() {
-
-                sendMessage(
-                    card.dataset.vibePrompt,
-                    "vibe"
-                );
-
-            }
-        );
-
-    });
-
-
-// ============================================================
-// EXPLORE CARDS
-// ============================================================
-
-document
-    .querySelectorAll("[data-explore-prompt]")
-    .forEach(function(card) {
-
-        card.addEventListener(
-            "click",
-            function() {
-
-                sendMessage(
-                    card.dataset.explorePrompt,
-                    "explore"
-                );
-
-            }
-        );
-
-    });
-
-
-// ============================================================
-// IMAGE GENERATION
-// ============================================================
-
-document
-    .getElementById("generateImageButton")
-    .addEventListener(
-        "click",
-        async function() {
-
-            const prompt =
-                document
-                    .getElementById(
-                        "imagePrompt"
-                    )
-                    .value
-                    .trim();
-
-
-            if (!prompt) {
-
-                toast(
-                    "Describe the image first."
-                );
-
-                return;
-
-            }
-
-
-            const status =
-                document
-                    .getElementById(
-                        "imageStatus"
-                    );
-
-            const image =
-                document
-                    .getElementById(
-                        "generatedImage"
-                    );
-
-
-            status.textContent =
-                "Generating image...";
-
-
-            image.style.display =
-                "none";
-
-
-            try {
-
-                const response =
-                    await fetch(
-                        "/ask",
-                        {
-
-                            method:
-                                "POST",
-
-                            headers: {
-                                "Content-Type":
-                                    "application/json"
-                            },
-
-                            body:
-                                JSON.stringify({
-
-                                    message:
-                                        prompt,
-
-                                    mode:
-                                        "image"
-
-                                })
-
-                        }
-                    );
-
-
-                const data =
-                    await response.json();
-
-
-                if (
-                    data.image
-                ) {
-
-                    image.src =
-                        data.image;
-
-                    image.onload =
-                        function() {
-
-                            image.style.display =
-                                "block";
-
-                        };
-
-
-                    status.textContent =
-                        "Image generated.";
-
-                }
-
-            }
-            catch (error) {
-
-                status.textContent =
-                    "Image generation failed.";
-
-            }
-
-        }
-    );
-
-
-// ============================================================
-// VIDEO GENERATION
-// ============================================================
-
-document
-    .getElementById("generateVideoButton")
-    .addEventListener(
-        "click",
-        async function() {
-
-            const prompt =
-                document
-                    .getElementById(
-                        "videoPrompt"
-                    )
-                    .value
-                    .trim();
-
-
-            if (!prompt) {
-
-                toast(
-                    "Describe your video first."
-                );
-
-                return;
-
-            }
-
-
-            const result =
-                document
-                    .getElementById(
-                        "videoResult"
-                    );
-
-
-            result.style.display =
-                "block";
-
-            result.textContent =
-                "Creating video prompt...";
-
-
-            try {
-
-                const response =
-                    await fetch(
-                        "/ask",
-                        {
-
-                            method:
-                                "POST",
-
-                            headers: {
-                                "Content-Type":
-                                    "application/json"
-                            },
-
-                            body:
-                                JSON.stringify({
-
-                                    message:
-                                        prompt,
-
-                                    mode:
-                                        "video"
-
-                                })
-
-                        }
-                    );
-
-
-                const data =
-                    await response.json();
-
-
-                result.textContent =
-                    data.text;
-
-
-            }
-            catch (error) {
-
-                result.textContent =
-                    "Unable to create the video prompt.";
-
-            }
-
-        }
-    );
-
-
-// ============================================================
-// LIBRARY STORAGE
-// ============================================================
-
-function getLibrary() {
-
-    try {
-
-        return JSON.parse(
-            localStorage.getItem(
-                "companion_library"
-            ) || "[]"
-        );
-
-    }
-    catch (error) {
-
-        return [];
-
-    }
-
-}
-
-
-function saveLibrary(library) {
-
-    localStorage.setItem(
-        "companion_library",
-        JSON.stringify(library)
-    );
-
-}
-
-
-// ============================================================
-// SAVE CURRENT CONVERSATION
-// ============================================================
-
-function saveCurrentConversation() {
-
-    if (
-        currentMessages.length < 2
-    ) {
-
-        return;
-
-    }
-
-
-    const library =
-        getLibrary();
-
-
-    const firstUser =
-        currentMessages.find(
-            function(item) {
-
-                return item.role === "user";
-
-            }
-        );
-
-
-    const title =
-        firstUser
-            ? firstUser.content.substring(
-                0,
-                60
-            )
-            : "New Conversation";
-
-
-    const conversation = {
-
-        id:
-            Date.now(),
-
-        title:
-            title,
-
-        date:
-            new Date().toLocaleString(),
-
-        messages:
-            currentMessages
-
-    };
-
-
-    library.unshift(
-        conversation
-    );
-
-
-    // Keep the library from growing forever
-    const limited =
-        library.slice(
-            0,
-            30
-        );
-
-
-    saveLibrary(
-        limited
-    );
-
-}
-
-
-// ============================================================
-// RENDER LIBRARY
-// ============================================================
-
-function renderLibrary() {
-
-    const container =
-        document.getElementById(
-            "libraryList"
-        );
-
-
-    const library =
-        getLibrary();
-
-
-    container.innerHTML =
-        "";
-
-
-    if (
-        library.length === 0
-    ) {
-
-        container.innerHTML = `
-            <div class="empty">
-                No conversations saved yet.
-                Start chatting and your conversations
-                will appear here.
-            </div>
-        `;
-
-        return;
-
-    }
-
-
-    library.forEach(
-        function(item) {
-
-            const element =
-                document.createElement(
-                    "div"
-                );
-
-
-            element.className =
-                "library-item";
-
-
-            element.innerHTML = `
-                <div class="library-title">
-                    ${escapeHtml(item.title)}
-                </div>
-
-                <div class="library-date">
-                    ${escapeHtml(item.date)}
-                </div>
-            `;
-
-
-            element.addEventListener(
-                "click",
-                function() {
-
-                    loadConversation(
-                        item
-                    );
-
-                }
-            );
-
-
-            container.appendChild(
-                element
-            );
-
-        }
-    );
-
-}
-
-
-// ============================================================
-// LOAD CONVERSATION
-// ============================================================
-
-function loadConversation(
-    conversation
-) {
-
-    openPage(
-        "chat"
-    );
-
-
-    messages.innerHTML =
-        "";
-
-
-    currentMessages = [];
-
-
-    conversation.messages.forEach(
-        function(item) {
-
-            addMessage(
-                item.content,
-                item.role === "user"
-                    ? "user"
-                    : "assistant"
-            );
-
-        }
-    );
-
-
-    toast(
-        "Conversation opened"
-    );
-
-}
-
-
-// ============================================================
-// ESCAPE HTML
-// ============================================================
-
-function escapeHtml(text) {
-
-    const div =
-        document.createElement(
-            "div"
-        );
-
-    div.textContent =
-        text;
-
-    return div.innerHTML;
-
-}
-
-
-// ============================================================
-// NEW CHAT
-// ============================================================
-
-document
-    .getElementById(
-        "newChatButton"
+        timeout=30
     )
-    .addEventListener(
-        "click",
-        function() {
-
-            if (
-                currentMessages.length >= 2 &&
-                saveConversations
-            ) {
-
-                saveCurrentConversation();
-
-            }
+    response.raise_for_status()
+    job_id = response.json().get("id")
+    if not job_id:
+        raise ValueError("Image generation failed to return job ID.")
+    return job_id
 
 
-            currentMessages =
-                [];
-
-
-            messages.innerHTML = `
-
-                <div class="message">
-
-                    <div class="message-avatar">
-                        🔥
-                    </div>
-
-                    <div class="bubble">
-                        Hello! I'm Companion AI. What would you like to do?
-                    </div>
-
-                </div>
-
-            `;
-
-
-            currentMessages.push({
-
-                role:
-                    "assistant",
-
-                content:
-                    "Hello! I'm Companion AI. What would you like to do?"
-
-            });
-
-
-            chatInput.value =
-                "";
-
-            status.textContent =
-                "Ready";
-
-
-            openPage(
-                "chat"
-            );
-
-
-            toast(
-                "New chat started"
-            );
-
+def smart(message, mode, image_data=None):
+    if mode == "image":
+        return {
+            "type": "image_pending",
+            "text": "Creating your image in the community queue... 🎨✨",
+            "jobId": generate_image(message)
         }
-    );
+
+    context_parts = []
+
+    if image_data:
+        context_parts.append(f"[User uploaded an image attachment. Acknowledge and discuss it perceptively.]")
+
+    found_urls = extract_urls(message)
+    if found_urls:
+        target_url = found_urls[0]
+        page_text = fetch_webpage_text(target_url)
+        if page_text:
+            context_parts.append(f"EXTRACTED CONTENT FROM WEBSITE ({target_url}):\n{page_text}")
+        else:
+            context_parts.append(f"Attempted to read website {target_url}, but it was unreachable or blocked.")
+
+    if should_search_web(message) and not found_urls:
+        results = search_web(message)
+        if results:
+            sources = "\n".join(f"[{i}] {r['title']}\nURL: {r['url']}\nSnippet: {r['snippet']}" for i, r in enumerate(results, 1))
+            context_parts.append(f"LIVE WEB SEARCH RESULTS:\n{sources}")
+
+    full_context = "\n\n".join(context_parts)
+    answer = get_answer(message, mode, context_data=full_context)
+    return {"type": "text", "text": answer}
 
 
-// ============================================================
-// SETTINGS - SAVE TOGGLE
-// ============================================================
-
-document
-    .getElementById(
-        "saveToggle"
-    )
-    .addEventListener(
-        "click",
-        function() {
-
-            this.classList.toggle(
-                "on"
-            );
-
-
-            saveConversations =
-                this.classList.contains(
-                    "on"
-                );
-
-
-            toast(
-                saveConversations
-                    ? "Conversation saving enabled"
-                    : "Conversation saving disabled"
-            );
-
-        }
-    );
-
-
-// ============================================================
-// SETTINGS - THEME TOGGLE
-// ============================================================
-
-document
-    .getElementById(
-        "themeToggle"
-    )
-    .addEventListener(
-        "click",
-        function() {
-
-            this.classList.toggle(
-                "on"
-            );
-
-
-            document.body.classList.toggle(
-                "plain-theme"
-            );
-
-        }
-    );
-
-
-// ============================================================
-// CLEAR LIBRARY
-// ============================================================
-
-document
-    .getElementById(
-        "clearLibrary"
-    )
-    .addEventListener(
-        "click",
-        function() {
-
-            localStorage.removeItem(
-                "companion_library"
-            );
-
-
-            renderLibrary();
-
-
-            toast(
-                "Library cleared"
-            );
-
-        }
-    );
-
-
-// ============================================================
-// INITIALIZATION
-// ============================================================
-
-currentMessages.push({
-
-    role:
-        "assistant",
-
-    content:
-        "Hello! I'm Companion AI. What would you like to do?"
-
-});
-
-
-renderLibrary();
-
-
-</script>
-
-</body>
-
-</html>
-"""
-
-
-# ============================================================
-# ROUTES
-# ============================================================
+# =========================================================
+# FLASK ROUTES
+# =========================================================
 
 @app.route("/")
-def home():
-
-    return render_template_string(UI)
+def index():
+    return render_template_string(HTML)
 
 
 @app.route("/ask", methods=["POST"])
 def ask():
+    data = request.get_json(silent=True) or {}
+    message = (data.get("message") or "").strip()
+    mode = (data.get("mode") or "chat").strip()
+    image_data = data.get("image")
+
+    if not message and not image_data:
+        return jsonify({"error": "Empty message"}), 400
 
     try:
-
-        data = request.get_json(
-            silent=True
-        ) or {}
-
-        message = str(
-            data.get(
-                "message",
-                ""
-            )
-        ).strip()
-
-        mode = str(
-            data.get(
-                "mode",
-                "chat"
-            )
-        ).lower()
-
-
-        if not message:
-
-            return jsonify({
-                "type": "text",
-                "text": "Please enter a message."
-            })
-
-
-        allowed_modes = {
-            "chat",
-            "codex",
-            "image",
-            "video",
-            "vibe",
-            "explore"
-        }
-
-
-        if mode not in allowed_modes:
-
-            mode = "chat"
-
-
-        result =
-            smart(
-                message,
-                mode
-            )
-
-
-        return jsonify(
-            result
-        )
-
-
+        result = smart(message, mode, image_data)
+        return jsonify(result)
     except Exception as error:
-
-        print(
-            "ERROR:",
-            error
-        )
-
-        return jsonify({
-
-            "type":
-                "text",
-
-            "text":
-                "An unexpected server error occurred."
-
-        }), 500
+        return jsonify({"type": "text", "text": f"Something went wrong 😅: {error}"}), 500
 
 
-# ============================================================
-# START SERVER
-# ============================================================
+@app.route("/image-status/<job_id>", methods=["GET"])
+def image_status(job_id):
+    try:
+        res = requests.get(f"https://stablehorde.net/api/v2/generate/check/{job_id}", timeout=15)
+        res.raise_for_status()
+        status = res.json()
+        if status.get("done"):
+            full = requests.get(f"https://stablehorde.net/api/v2/generate/status/{job_id}", timeout=15)
+            full.raise_for_status()
+            gens = full.json().get("generations", [])
+            if gens:
+                return jsonify({"done": True, "url": gens[0].get("img")})
+        return jsonify({"done": False, "wait_time": status.get("wait_time", 10)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# =========================================================
+# FRONTEND INTERFACE
+# =========================================================
+
+HTML = r"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fast AI</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+    --bg: #1c1d21; --sidebar-bg: #141518; --surface: #26282e; --surface-hover: #30333b;
+    --border: rgba(255, 255, 255, 0.1); --text: #f1f3f5; --muted: #9ca3af;
+    --meta-ring: linear-gradient(135deg, #0082fb, #00c6ff, #a855f7, #ff5b19);
+    --user-bubble: #2b2d35;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+button, textarea, input { font: inherit; cursor: pointer; }
+.app { display: flex; height: 100vh; }
+
+.meta-orb {
+    width: 32px; height: 32px; border-radius: 50%; padding: 2.5px;
+    background: var(--meta-ring); background-size: 200% 200%;
+    animation: orbSpin 4s linear infinite; display: grid; place-items: center; flex-shrink: 0;
+}
+.meta-orb-inner { width: 100%; height: 100%; border-radius: 50%; background: #141518; display: grid; place-items: center; font-size: 14px; }
+.meta-orb.hero { width: 64px; height: 64px; padding: 4px; margin: 0 auto 18px; box-shadow: 0 0 32px rgba(0, 130, 251, 0.28); }
+.meta-orb.hero .meta-orb-inner { font-size: 28px; }
+@keyframes orbSpin { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+
+.sidebar { width: 268px; min-width: 268px; background: var(--sidebar-bg); display: flex; flex-direction: column; padding: 12px; z-index: 40; border-right: 1px solid rgba(255, 255, 255, 0.06); }
+.new-chat { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: transparent; color: var(--text); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; font-size: 14px; font-weight: 500; margin-bottom: 10px; }
+.new-chat:hover { background: var(--surface-hover); }
+.search { width: 100%; background: #1e2025; color: var(--text); border: 1px solid var(--border); padding: 9px 12px; border-radius: 10px; outline: none; font-size: 13px; margin-bottom: 12px; }
+.section-label { color: #7c828d; font-size: 11px; font-weight: 600; padding: 6px 10px; }
+.nav { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
+.nav button { border: 0; background: transparent; color: #d1d5db; padding: 9px 12px; text-align: left; border-radius: 10px; font-size: 13.5px; display: flex; align-items: center; gap: 10px; }
+.nav button:hover, .nav button.active { background: var(--surface-hover); color: #fff; }
+.history-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.history-item { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: #d1d5db; padding: 9px 12px; text-align: left; border-radius: 10px; font-size: 13px; }
+.history-item:hover, .history-item.active { background: var(--surface-hover); color: #fff; }
+.history-empty { color: #7c828d; font-size: 12px; padding: 8px 10px; }
+.account { border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 12px; display: flex; align-items: center; gap: 10px; padding-left: 4px; }
+
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+.topbar { height: 58px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; position: relative; }
+.model-pill { display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 12px; font-size: 16px; font-weight: 600; color: var(--text); background: transparent; border: 0; }
+.model-pill:hover { background: var(--surface); }
+.model-dropdown { position: absolute; top: 46px; left: 20px; width: 280px; background: #25272e; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 16px; padding: 6px; box-shadow: 0 12px 32px rgba(0,0,0,0.45); display: none; flex-direction: column; gap: 2px; z-index: 60; }
+.model-dropdown.open { display: flex; }
+.model-option { display: flex; flex-direction: column; align-items: flex-start; padding: 10px 12px; border: 0; background: transparent; border-radius: 10px; color: #fff; text-align: left; }
+.model-option:hover { background: #32353f; }
+.model-option small { color: var(--muted); font-size: 11.5px; }
+
+.chat-scroll { flex: 1; overflow-y: auto; padding: 10px 20px 30px; }
+.chat-container { max-width: 790px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; }
+.welcome-screen { margin: auto; text-align: center; padding: 46px 16px 26px; max-width: 740px; }
+.welcome-screen h1 { font-size: 28px; font-weight: 600; margin-bottom: 8px; background: linear-gradient(90deg, #fff, #a5b4fc, #38bdf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.welcome-screen p { color: var(--muted); font-size: 14.5px; margin-bottom: 26px; }
+.starters { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 10px; }
+.starters button { padding: 14px; border: 1px solid var(--border); border-radius: 16px; background: rgba(255,255,255,0.02); color: #e2e8f0; text-align: left; font-size: 13px; line-height: 1.45; }
+.starters button:hover { background: var(--surface); border-color: rgba(0, 130, 251, 0.45); }
+
+.messages { display: flex; flex-direction: column; gap: 24px; padding-top: 10px; }
+.message { display: flex; gap: 14px; width: 100%; }
+.message.user { justify-content: flex-end; }
+.message.user .bubble { background: var(--user-bubble); border: 1px solid rgba(255,255,255,0.08); padding: 12px 18px; border-radius: 22px 22px 6px 22px; max-width: 76%; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.message.assistant { align-items: flex-start; }
+.assistant-body { flex: 1; min-width: 0; line-height: 1.7; font-size: 15.5px; }
+
+.uploaded-preview-thumb { max-width: 180px; max-height: 180px; border-radius: 10px; margin-bottom: 8px; border: 1px solid var(--border); display: block; }
+
+/* 3-STAGE THINKING ANIMATION */
+.thinking-stage { display: inline-flex; align-items: center; gap: 12px; padding: 8px 4px; min-height: 36px; }
+.color-dots { display: inline-flex; align-items: center; gap: 7px; }
+.color-dots span {
+    width: 10px; height: 10px; border-radius: 50%;
+    animation: dotBounce 0.85s infinite ease-in-out, dotColorShift 2s infinite linear;
+}
+.color-dots span:nth-child(2) { animation-delay: 0.15s, 0.4s; }
+.color-dots span:nth-child(3) { animation-delay: 0.3s, 0.8s; }
+@keyframes dotBounce {
+    0%, 80%, 100% { transform: translateY(0) scale(0.85); }
+    40% { transform: translateY(-8px) scale(1.2); }
+}
+@keyframes dotColorShift {
+    0%   { background-color: #0082fb; box-shadow: 0 0 10px #0082fb88; }
+    25%  { background-color: #10a37f; box-shadow: 0 0 10px #10a37f88; }
+    50%  { background-color: #f59e0b; box-shadow: 0 0 10px #f59e0b88; }
+    75%  { background-color: #ec4899; box-shadow: 0 0 10px #ec489988; }
+    100% { background-color: #0082fb; box-shadow: 0 0 10px #0082fb88; }
+}
+.thinking-text {
+    font-weight: 600; font-size: 15.5px;
+    background: linear-gradient(90deg, #0082fb, #00c6ff, #10a37f, #f59e0b, #ec4899, #0082fb);
+    background-size: 300% 100%;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    animation: gradientSlide 2.2s linear infinite;
+}
+@keyframes gradientSlide { 0% { background-position: 0% 50%; } 100% { background-position: 100% 50%; } }
+.got-it-badge {
+    font-weight: 700; font-size: 15.5px; color: #34d399;
+    animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+@keyframes popIn { 0% { opacity: 0; transform: scale(0.8); } 100% { opacity: 1; transform: scale(1); } }
+
+/* BEAUTIFUL TABLES */
+.rich-content > * + * { margin-top: 14px; }
+.rich-content h1, .rich-content h2, .rich-content h3 { color: #fff; font-weight: 600; margin-top: 18px; }
+.table-wrapper {
+    width: 100%; overflow-x: auto; border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: linear-gradient(145deg, #1a1c22, #16171b);
+    margin: 16px 0; box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+}
+.md-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
+.md-table thead { background: linear-gradient(90deg, #1e2330, #252a38); }
+.md-table th {
+    padding: 14px 18px; font-weight: 600; color: #e0e7ff;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.md-table td {
+    padding: 13px 18px; border-bottom: 1px solid rgba(255,255,255,0.06);
+    color: #e2e8f0; transition: background 0.15s;
+}
+.md-table tbody tr:hover td { background: rgba(0, 130, 251, 0.08); }
+.md-table tbody tr:last-child td { border-bottom: none; }
+
+.code-block { border-radius: 12px; overflow: hidden; background: #0d0e11; border: 1px solid rgba(255,255,255,0.12); margin: 14px 0; }
+.code-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: #23252c; color: #b4b4b4; font-size: 12px; }
+.copy-btn { background: transparent; border: 0; color: #e2e8f0; font-size: 12px; padding: 3px 8px; border-radius: 6px; }
+.copy-btn:hover { background: rgba(255,255,255,0.12); }
+.code-block pre { padding: 14px 16px; overflow-x: auto; margin: 0; font-family: monospace; font-size: 13.5px; color: #e5e7eb; }
+.inline-code { background: #2b2d35; padding: 2px 6px; border-radius: 6px; font-size: 0.88em; color: #f472b6; }
+
+.composer-wrapper { padding: 8px 20px 16px; background: var(--bg); }
+.composer-box { max-width: 790px; margin: 0 auto; position: relative; }
+.attachment-chip { display: inline-flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--border); padding: 6px 12px; border-radius: 10px; font-size: 12.5px; margin-bottom: 8px; color: #e5e5e5; }
+.attachment-chip button { background: transparent; border: 0; color: #aaa; }
+
+/* + MENU */
+.popover-menu {
+    position: absolute; bottom: 66px; background: #25272e;
+    border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+    padding: 6px; box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+    display: none; z-index: 60;
+}
+.popover-menu.open { display: flex; }
+.plus-menu { left: 0; width: 280px; flex-direction: column; gap: 2px; }
+.plus-menu .menu-section { padding: 6px 10px 4px; font-size: 11px; color: #7c828d; font-weight: 600; }
+.plus-menu button {
+    display: flex; align-items: center; gap: 11px; width: 100%;
+    padding: 10px 12px; background: transparent; border: 0;
+    border-radius: 10px; color: #f1f3f5; font-size: 13.5px; text-align: left;
+}
+.plus-menu button:hover { background: #32353f; }
+.plus-menu button .icon { font-size: 16px; width: 22px; text-align: center; }
+
+.emoji-picker {
+    right: 48px; width: 320px; max-height: 280px; overflow-y: auto;
+    flex-wrap: wrap; gap: 4px; padding: 10px;
+}
+.emoji-picker button {
+    width: 36px; height: 36px; border: 0; background: transparent;
+    border-radius: 8px; font-size: 20px;
+}
+.emoji-picker button:hover { background: #32353f; }
+
+.composer-pill {
+    display: flex; align-items: flex-end; gap: 6px;
+    background: var(--surface); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 28px; padding: 8px 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+}
+.plus-btn {
+    width: 36px; height: 36px; border-radius: 50%; border: 0;
+    background: rgba(255,255,255,0.06); color: #fff; font-size: 22px;
+    display: grid; place-items: center; flex-shrink: 0; transition: transform 0.2s;
+}
+.plus-btn.active { transform: rotate(45deg); background: rgba(255,255,255,0.16); }
+.composer-pill textarea {
+    flex: 1; background: transparent; border: 0; outline: none; color: #fff;
+    resize: none; max-height: 180px; min-height: 24px; padding: 7px 6px; font-size: 15px;
+}
+.icon-btn {
+    width: 36px; height: 36px; border-radius: 50%; border: 0;
+    background: transparent; color: #d1d5db; font-size: 17px;
+    display: grid; place-items: center; flex-shrink: 0;
+}
+.icon-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.send-btn {
+    width: 36px; height: 36px; border-radius: 50%; border: 0;
+    background: linear-gradient(135deg, #0082fb, #00b4ff); color: #fff;
+    font-size: 17px; font-weight: bold; display: grid; place-items: center; flex-shrink: 0;
+}
+.send-btn:disabled { background: #4b5563; }
+.footer-note { text-align: center; font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+
+#toast {
+    position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%) translateY(15px);
+    opacity: 0; background: #2b2d35; border: 1px solid var(--border); color: #fff;
+    padding: 9px 16px; border-radius: 20px; font-size: 13px; transition: 0.25s; z-index: 100;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+#cameraModal { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none; place-items: center; z-index: 1000; }
+#cameraModal.open { display: grid; }
+.camera-box { background: #22252e; padding: 20px; border-radius: 18px; text-align: center; border: 1px solid var(--border); max-width: 440px; width: 100%; }
+.camera-box video { width: 100%; border-radius: 12px; background: #000; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<div class="app">
+    <aside class="sidebar" id="sidebar">
+        <button class="new-chat" id="newChatBtn">
+            <span style="display:flex;align-items:center;gap:10px;">
+                <span class="meta-orb"><span class="meta-orb-inner">🔥</span></span>
+                <span>New chat</span>
+            </span>
+            <span style="color:#9ca3af;font-size:16px;">✎</span>
+        </button>
+
+        <input class="search" id="searchChats" placeholder="Search chats...">
+
+        <div class="section-label">MODES</div>
+        <nav class="nav" id="modeNav">
+            <button class="active" data-mode="chat">💬 Fast Chat</button>
+            <button data-mode="deepseek">🧠 DeepSeek Style</button>
+            <button data-mode="codex">💻 Fast Codex</button>
+            <button data-mode="creative">✨ Creative</button>
+            <button data-mode="image">🎨 Imagine Image</button>
+            <button data-mode="explore">🌍 Web Explore</button>
+        </nav>
+
+        <div class="section-label">HISTORY</div>
+        <div class="history-list" id="historyList"></div>
+
+        <div class="account">
+            <div class="meta-orb"><span class="meta-orb-inner">B</span></div>
+            <div>
+                <div style="font-size:13.5px;font-weight:600;">Bartho AI</div>
+                <div style="font-size:11px;color:#9ca3af;">Fast-0.0 • DeepSeek ready 🚀</div>
+            </div>
+        </div>
+    </aside>
+
+    <main class="main">
+        <header class="topbar">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <button class="model-pill" id="modelPillBtn">Fast <span>0.0 ▾</span></button>
+                <div class="model-dropdown" id="modelDropdown">
+                    <button class="model-option" data-mode="chat"><strong>💬 Fast 0.0</strong><small>Balanced & autonomous</small></button>
+                    <button class="model-option" data-mode="deepseek"><strong>🧠 DeepSeek Style</strong><small>Strong reasoning & coding</small></button>
+                    <button class="model-option" data-mode="codex"><strong>💻 Fast Codex</strong><small>Code & debugging expert</small></button>
+                    <button class="model-option" data-mode="creative"><strong>✨ Creative</strong><small>Ideas, writing, stories</small></button>
+                    <button class="model-option" data-mode="explore"><strong>🌍 Research</strong><small>Live web + analysis</small></button>
+                    <button class="model-option" data-mode="image"><strong>🎨 Imagine</strong><small>AI image generation</small></button>
+                </div>
+            </div>
+            <div style="font-size:12px;color:#34d399;">● Online</div>
+        </header>
+
+        <div class="chat-scroll" id="chatScroll">
+            <div class="chat-container">
+                <div class="welcome-screen" id="welcomeScreen">
+                    <div class="meta-orb hero"><span class="meta-orb-inner">🔥</span></div>
+                    <h1>Ask Fast anything ✨</h1>
+                    <p>Paste any website link, take a photo, upload files, or just chat. Beautiful tables & DeepSeek-style reasoning ready.</p>
+                    <div class="starters">
+                        <button data-prompt="Compare Python, JavaScript, Rust and Go in a clean beautiful table with pros and cons">
+                            📊 Compare languages in a table
+                        </button>
+                        <button data-prompt="Explain recursion with a simple example and a table of call stack">
+                            🧠 Explain recursion clearly
+                        </button>
+                        <button data-prompt="Build a modern HTML & CSS card component with full copyable code">
+                            💻 Write beautiful code
+                        </button>
+                    </div>
+                </div>
+                <div class="messages" id="messages"></div>
+            </div>
+        </div>
+
+        <div class="composer-wrapper">
+            <div class="composer-box">
+                <div id="attachmentPreview"></div>
+
+                <div class="popover-menu plus-menu" id="plusMenu">
+                    <div class="menu-section">ADD</div>
+                    <button type="button" id="uploadFileAction"><span class="icon">📎</span> Upload file / code</button>
+                    <button type="button" id="uploadImageAction"><span class="icon">🖼️</span> Upload picture</button>
+                    <button type="button" id="openCameraAction"><span class="icon">📸</span> Take photo with camera</button>
+
+                    <div class="menu-section">CREATE</div>
+                    <button type="button" data-quick-mode="image"><span class="icon">🎨</span> Imagine an AI image</button>
+
+                    <div class="menu-section">AI STYLE</div>
+                    <button type="button" data-mode="deepseek"><span class="icon">🧠</span> DeepSeek Style</button>
+                    <button type="button" data-mode="codex"><span class="icon">💻</span> Fast Codex</button>
+                    <button type="button" data-mode="creative"><span class="icon">✨</span> Creative Mode</button>
+                    <button type="button" data-mode="explore"><span class="icon">🌍</span> Research Mode</button>
+                </div>
+
+                <div class="popover-menu emoji-picker" id="emojiPicker"></div>
+
+                <input type="file" id="hiddenFileInput" hidden accept=".txt,.py,.js,.html,.css,.json,.md,.csv,.pdf">
+                <input type="file" id="hiddenImageInput" hidden accept="image/*">
+
+                <div class="composer-pill">
+                    <button type="button" class="plus-btn" id="plusBtn" title="Add files, models & more">+</button>
+                    <textarea id="chatInput" rows="1" placeholder="Message Fast or paste a website link..."></textarea>
+                    <button type="button" class="icon-btn" id="emojiBtn" title="Insert emoji">😊</button>
+                    <button type="button" class="icon-btn" id="voiceBtn" title="Voice input">🎙️</button>
+                    <button type="button" class="send-btn" id="sendBtn" title="Send message">↑</button>
+                </div>
+                <div class="footer-note">Fast-0.0 by Bartho AI • DeepSeek style + beautiful tables + camera ready</div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<div id="cameraModal">
+    <div class="camera-box">
+        <h3 style="margin-bottom:12px;">Snap a Photo 📸</h3>
+        <video id="cameraVideo" autoplay playsinline></video>
+        <div style="display:flex;gap:10px;justify-content:center;">
+            <button type="button" class="new-chat" id="captureBtn" style="background:#0082fb;border:0;">Capture Photo</button>
+            <button type="button" class="new-chat" id="closeCameraBtn" style="background:#333;border:0;">Cancel</button>
+        </div>
+    </div>
+</div>
+<canvas id="cameraCanvas" hidden></canvas>
+
+<div id="toast"></div>
+
+<script>
+const CHAT_STORAGE_KEY = "fast-ai-conversations";
+const ACTIVE_CHAT_STORAGE_KEY = "fast-ai-active-conversation";
+
+function loadSavedChats() {
+    try {
+        const stored = localStorage.getItem(CHAT_STORAGE_KEY);
+        const chats = stored ? JSON.parse(stored) : [];
+        if (!Array.isArray(chats)) throw new TypeError("Saved conversations are not a list.");
+        return chats.filter(chat =>
+            chat &&
+            typeof chat.id === "string" &&
+            typeof chat.title === "string" &&
+            Array.isArray(chat.messages) &&
+            chat.messages.every(message =>
+                message &&
+                ["user", "assistant"].includes(message.role) &&
+                typeof message.text === "string"
+            )
+        );
+    } catch (error) {
+        console.error("Could not load saved conversations:", error);
+        showToast("Saved conversations could not be loaded.");
+        return [];
+    }
+}
+
+function loadActiveChatId() {
+    try {
+        return localStorage.getItem(ACTIVE_CHAT_STORAGE_KEY);
+    } catch (error) {
+        console.error("Could not load the active conversation:", error);
+        showToast("The last conversation could not be restored.");
+        return null;
+    }
+}
+
+const state = {
+    mode: "chat",
+    isGenerating: false,
+    attachedFile: null,
+    attachedImage: null,
+    chats: loadSavedChats(),
+    activeChatId: loadActiveChatId()
+};
+
+const chatInput = document.getElementById("chatInput");
+const sendBtn = document.getElementById("sendBtn");
+const plusBtn = document.getElementById("plusBtn");
+const plusMenu = document.getElementById("plusMenu");
+const emojiBtn = document.getElementById("emojiBtn");
+const emojiPicker = document.getElementById("emojiPicker");
+const modelPillBtn = document.getElementById("modelPillBtn");
+const modelDropdown = document.getElementById("modelDropdown");
+const messagesEl = document.getElementById("messages");
+const welcomeScreen = document.getElementById("welcomeScreen");
+const chatScroll = document.getElementById("chatScroll");
+const hiddenFileInput = document.getElementById("hiddenFileInput");
+const hiddenImageInput = document.getElementById("hiddenImageInput");
+const attachmentPreview = document.getElementById("attachmentPreview");
+const historyList = document.getElementById("historyList");
+const searchChats = document.getElementById("searchChats");
+const newChatBtn = document.getElementById("newChatBtn");
+
+const cameraModal = document.getElementById("cameraModal");
+const cameraVideo = document.getElementById("cameraVideo");
+const cameraCanvas = document.getElementById("cameraCanvas");
+let cameraStream = null;
+
+// Huge emoji library
+const EMOJIS = [
+    "😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃","😉","😊","😇","🥰","😍","🤩","😘","😗","😚","😙",
+    "🥲","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬",
+    "😮‍💨","🤥","😌","😔","😪","🤤","😴","😷","🤒","🤕","🤢","🤮","🥵","🥶","🥴","😵","🤯","🤠","🥳","🥸",
+    "😎","🤓","🧐","😕","😟","🙁","☹️","😮","😯","😲","😳","🥺","😦","😧","😨","😰","😥","😢","😭","😱",
+    "😖","😣","😞","😓","😩","😫","🥱","😤","😡","😠","🤬","😈","👿","💀","☠️","💩","🤡","👹","👺","👻",
+    "👽","👾","🤖","😺","😸","😹","😻","😼","😽","🙀","😿","😾","🙈","🙉","🙊","💋","💌","💘","💝","💖",
+    "💗","💓","💞","💕","💟","❣️","💔","❤️","🧡","💛","💚","💙","💜","🤎","🖤","🤍","💯","💢","💥","💫",
+    "💦","💨","🕳️","💣","💬","👋","🤚","🖐️","✋","🖖","👌","🤌","🤏","✌️","🤞","🤟","🤘","🤙","👈","👉",
+    "👆","🖕","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪",
+    "🦾","🦿","🦵","🦶","👂","🦻","👃","🧠","🫀","🫁","🦷","🦴","👀","👁️","👅","👄","👶","🧒","👦","👧",
+    "🧑","👱","👨","🧔","👩","🧓","👴","👵","🙍","🙎","🙅","🙆","💁","🙋","🧏","🙇","🤦","🤷","👮","🕵️",
+    "💂","ninja","👷","🤴","👸","👳","👲","🧕","🤵","👰","🤰","🤱","👼","🎅","🤶","🦸","🦹","🧙","🧚","🧛",
+    "🧜","🧝","🧞","🧟","💆","💇","🚶","🧍","🧎","🏃","💃","🕺","🕴️","👯","🧖","🧗","🤺","🏇","⛷️","🏂",
+    "🏌️","🏄","🚣","🏊","⛹️","🏋️","🚴","🚵","🤸","🤼","🤽","🤾","🤹","🧘","🛀","🛌","👭","👫","👬","💏",
+    "💑","👪","🗣️","👤","👥","🫂","👣","🐵","🐒","🦍","🦧","🐶","🐕","🦮","🐩","🐺","🦊","🦝","🐱","🐈",
+    "🦁","🐯","🐅","🐆","🐴","🐎","🦄","🦓","🦌","🦬","🐮","🐂","🐃","🐄","🐷","🐖","🐗","🐽","🐏","🐑",
+    "🐐","🐪","🐫","🦙","🦒","🐘","🦣","🦏","🦛","🐭","🐁","🐀","🐹","🐰","🐇","🐿️","🦫","🦔","🦇","🐻",
+    "🐨","🐼","🦥","🦦","🦨","🦘","🦡","🐾","🦃","🐔","🐓","🐣","🐤","🐥","🐦","🐧","🕊️","🦅","🦆","🦢",
+    "🦉","🦤","🪶","🦩","🦚","🦜","🐸","🐊","🐢","🦎","🐍","🐲","🐉","🦕","🦖","🐳","🐋","🐬","🦭","🐟",
+    "🐠","🐡","🦈","🐙","🐚","🐌","🦋","🐛","🐜","🐝","🪲","🐞","🦗","🪳","🕷️","🕸️","🦂","🦟","🪰","🪱",
+    "🦠","💐","🌸","💮","🏵️","🌹","🥀","🌺","🌻","🌼","🌷","🌱","🪴","🌲","🌳","🌴","🌵","🌾","🌿","☘️",
+    "🍀","🍁","🍂","🍃","🍇","🍈","🍉","🍊","🍋","🍌","🍍","🥭","🍎","🍏","🍐","🍑","🍒","🍓","🫐","🥝",
+    "🍅","🫒","🥥","🥑","🍆","🥔","🥕","🌽","🌶️","🫑","🥒","🥬","🥦","🧄","🧅","🍄","🥜","🌰","🍞","🥐",
+    "🥖","🫓","🥨","🥯","🥞","🧇","🧀","🍖","🍗","🥩","🥓","🍔","🍟","🍕","🌭","🥪","🌮","🌯","🫔","🥙",
+    "🧆","🥚","🍳","🥘","🍲","🫕","🥣","🥗","🍿","🧈","🧂","🥫","🍱","🍘","🍙","🍚","🍛","🍜","🍝","🍠",
+    "🍢","🍣","🍤","🍥","🥮","🍡","🥟","🥠","🥡","🦀","🦞","🦐","🦑","🦪","🍦","🍧","🍨","🍩","🍪","🎂",
+    "🍰","🧁","🥧","🍫","🍬","🍭","🍮","🍯","🍼","🥛","☕","🫖","🍵","🍶","🍾","🍷","🍸","🍹","🍺","🍻",
+    "🥂","🥃","🥤","🧋","🧃","🧉","🧊","🥢","🍽️","🍴","🥄","🔪","🏺","🌍","🌎","🌏","🌐","🗺️","🗾","🧭",
+    "🏔️","⛰️","🌋","🗻","🏕️","🏖️","🏜️","🏝️","🏞️","🏟️","🏛️","🏗️","🧱","🪨","🪵","🛖","🏘️","🏚️","🏠","🏡",
+    "🏢","🏣","🏤","🏥","🏦","🏨","🏩","🏪","🏫","🏬","🏭","🏯","🏰","💒","🗼","🗽","⛪","🕌","🛕","🕍",
+    "⛩️","🕋","⛲","⛺","🌁","🌃","🏙️","🌄","🌅","🌆","🌇","🌉","♨️","🎠","🎡","🎢","💈","🎪","🚂","🚃",
+    "🚄","🚅","🚆","🚇","🚈","🚉","🚊","🚝","🚞","🚋","🚌","🚍","🚎","🚐","🚑","🚒","🚓","🚔","🚕","🚖",
+    "🚗","🚘","🚙","🛻","🚚","🚛","🚜","🏎️","🏍️","🛵","🦽","🦼","🛺","🚲","🛴","🛹","🛼","🚏","🛣️","🛤️",
+    "🛢️","⛽","🚨","🚥","🚦","🛑","🚧","⚓","⛵","🛶","🚤","🛳️","⛴️","🛥️","🚢","✈️","🛩️","🛫","🛬","🪂",
+    "💺","🚁","🚟","🚠","🚡","🛰️","🚀","🛸","🛎️","🧳","⌛","⏳","⌚","⏰","⏱️","⏲️","🕰️","🕛","🕧","🕐",
+    "🕜","🕑","🕝","🕒","🕞","🕓","🕟","🕔","🕠","🕕","🕡","🕖","🕢","🕗","🕣","🕘","🕤","🕙","🕥","🕚",
+    "🕦","🌑","🌒","🌓","🌔","🌕","🌖","🌗","🌘","🌙","🌚","🌛","🌜","🌡️","☀️","🌝","🌞","🪐","⭐","🌟",
+    "🌠","🌌","☁️","⛅","⛈️","🌤️","🌥️","🌦️","🌧️","🌨️","🌩️","🌪️","🌫️","🌬️","🌀","🌈","🌂","☂️","☔","⛱️",
+    "⚡","❄️","☃️","⛄","☄️","🔥","💧","🌊","🎃","🎄","🎆","🎇","✨","🎈","🎉","🎊","🎋","🎍","🎎","🎏",
+    "🎐","🎑","🧧","🎀","🎁","🎗️","🎟️","🎫","🎖️","🏆","🏅","🥇","🥈","🥉","⚽","⚾","🥎","🏀","🏐","🏈",
+    "🏉","🎾","🥏","🎳","🏏","🏑","🏒","🥍","🏓","🏸","🥊","🥋","🥅","⛳","⛸️","🎣","🤿","🎽","🎿","🛷",
+    "🥌","🎯","🪀","🪁","🎱","🔮","🪄","🧿","🎮","🕹️","🎰","🎲","🧩","🧸","🪅","🪩","🪆","♠️","♥️","♦️",
+    "♣️","♟️","🃏","🀄","🎴","🎭","🖼️","🎨","🧵","🪡","🧶","🪢","👓","🕶️","🥽","🥼","🦺","👔","👕","👖",
+    "🧣","🧤","🧥","🧦","👗","👘","🥻","🩱","🩲","🩳","👙","👚","👛","👜","👝","🛍️","🎒","🩴","👞","👟",
+    "🥾","flat","👠","👡","🩰","👢","👑","👒","🎩","🎓","🧢","🪖","⛑️","📿","💄","💍","💎","🔇","🔈","🔉",
+    "🔊","📢","📣","📯","🔔","🔕","🎼","🎵","🎶","🎙️","🎚️","🎛️","🎤","🎧","📻","🎷","🪗","🎸","🎹","🎺",
+    "🎻","🪕","🥁","🪘","📱","📲","☎️","📞","📟","📠","🔋","🔌","💻","🖥️","🖨️","⌨️","🖱️","🖲️","💽","💾",
+    "💿","📀","🧮","🎥","🎞️","📽️","🎬","📺","📷","📸","📹","📼","🔍","🔎","🕯️","💡","🔦","🏮","🪔","📔",
+    "📕","📖","📗","📘","📙","📚","📓","📒","📃","📜","📄","📰","🗞️","📑","🔖","🏷️","💰","🪙","💴","💵",
+    "💶","💷","💸","💳","🧾","💹","✉️","📧","📨","📩","📤","📥","📦","📫","📪","📬","📭","📮","🗳️","✏️",
+    "✒️","🖋️","🖊️","🖌️","🖍️","📝","💼","📁","📂","🗂️","📅","📆","🗒️","🗓️","📇","📈","📉","📊","📋","📌",
+    "📍","📎","🖇️","📏","📐","✂️","🗃️","🗄️","🗑️","🔒","🔓","🔏","🔐","🔑","🗝️","🔨","🪓","⛏️","⚒️","🛠️",
+    "🗡️","⚔️","🔫","🪃","🏹","🛡️","🪚","🔧","🪛","🔩","⚙️","🗜️","⚖️","🦯","🔗","⛓️","🪝","🧰","🧲","🪜",
+    "⚗️","🧪","🧫","🧬","🔬","🔭","📡","💉","🩸","💊","🩹","🩺","🚪","🛗","🪞","🪟","🛏️","🛋️","🪑","🚽",
+    "🪠","🚿","🛁","🪤","🪒","🧴","🧷","🧹","🧺","🧻","🪣","🧼","🪥","🧽","🧯","🛒","🚬","⚰️","🪦","⚱️",
+    "🗿","🪧","🏧","🚮","🚰","♿","🚹","🚺","🚻","🚼","🚾","🛂","🛃","🛄","🛅","⚠️","🚸","⛔","🚫","🚳",
+    "🚭","🚯","🚱","🚷","📵","🔞","☢️","☣️","⬆️","↗️","➡️","↘️","⬇️","↙️","⬅️","↖️","↕️","↔️","↩️","↪️",
+    "⤴️","⤵️","🔃","🔄","🔙","🔚","🔛","🔜","🔝","🛐","⚛️","🕉️","✡️","☸️","☯️","✝️","☦️","☪️","☮️","🕎",
+    "🔯","♈","♉","♊","♋","♌","♍","♎","♏","♐","♑","♒","♓","⛎","🔀","🔁","🔂","▶️","⏩","⏭️","⏯️","◀️",
+    "⏪","⏮️","🔼","⏫","🔽","⏬","⏸️","⏹️","⏺️","⏏️","🎦","🔅","🔆","📶","📳","📴","♀️","♂️","⚧️","✖️",
+    "➕","➖","➗","♾️","‼️","⁉️","❓","❔","❕","❗","〰️","💱","💲","⚕️","♻️","⚜️","🔱","📛","🔰","⭕",
+    "✅","☑️","✔️","❌","❎","➰","➿","〽️","✳️","✴️","❇️","©️","®️","™️","#️⃣","*️⃣","0️⃣","1️⃣","2️⃣","3️⃣",
+    "4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟","🔠","🔡","🔢","🔣","🔤","🅰️","🆎","🅱️","🆑","🆒","🆓","ℹ️","🆔",
+    "Ⓜ️","🆕","🆖","🅾️","🆗","🅿️","🆘","🆙","🆚","🈁","🈂️","🈷️","🈶","🈯","🉐","🈹","🈚","🈲","🉑","🈸",
+    "🈴","🈳","㊗️","㊙️","🈺","🈵","🔴","🟠","🟡","🟢","🔵","🟣","🟤","⚫","⚪","🟥","🟧","🟨","🟩","🟦",
+    "🟪","🟫","⬛","⬜","◼️","◻️","◾","◽","▪️","▫️","🔶","🔷","🔸","🔹","🔺","🔻","💠","🔘","🔳","🔲",
+    "🏁","🚩","🎌","🏴","🏳️","🏳️‍🌈","🏳️‍⚧️","🏴‍☠️","🇦🇨","🇦🇩","🇦🇪","🇦🇫","🇦🇬","🇦🇮","🇦🇱","🇦🇲","🇦🇴","🇦🇶","🇦🇷","🇦🇸",
+    "🇦🇹","🇦🇺","🇦🇼","🇦🇽","🇦🇿","🇧🇦","🇧🇧","🇧🇩","🇧🇪","🇧🇫","🇧🇬","🇧🇭","🇧🇮","🇧🇯","🇧🇱","🇧🇲","🇧🇳","🇧🇴","🇧🇶","🇧🇷",
+    "🇧🇸","🇧🇹","🇧🇻","🇧🇼","🇧🇾","🇧🇿","🇨🇦","🇨🇨","🇨🇩","🇨🇫","🇨🇬","🇨🇭","🇨🇮","🇨🇰","🇨🇱","🇨🇲","🇨🇳","🇨🇴","🇨🇵","🇨🇷",
+    "🇨🇺","🇨🇻","🇨🇼","🇨🇽","🇨🇾","🇨🇿","🇩🇪","🇩🇬","🇩🇯","🇩🇰","🇩🇲","🇩🇴","🇩🇿","🇪🇦","🇪🇨","🇪🇪","🇪🇬","🇪🇭","🇪🇷","🇪🇸",
+    "🇪🇹","🇪🇺","🇫🇮","🇫🇯","🇫🇰","🇫🇲","🇫🇴","🇫🇷","🇬🇦","🇬🇧","🇬🇩","🇬🇪","🇬🇫","🇬🇬","🇬🇭","🇬🇮","🇬🇱","🇬🇲","🇬🇳","🇬🇵",
+    "🇬🇶","🇬🇷","🇬🇸","🇬🇹","🇬🇺","🇬🇼","🇬🇾","🇭🇰","🇭🇲","🇭🇳","🇭🇷","🇭🇹","🇭🇺","🇮🇨","🇮🇩","🇮🇪","🇮🇱","🇮🇲","🇮🇳","🇮🇴",
+    "🇮🇶","🇮🇷","🇮🇸","🇮🇹","🇯🇪","🇯🇲","🇯🇴","🇯🇵","🇰🇪","🇰🇬","🇰🇭","🇰🇮","🇰🇲","🇰🇳","🇰🇵","🇰🇷","🇰🇼","🇰🇾","🇰🇿","🇱🇦",
+    "🇱🇧","🇱🇨","🇱🇮","🇱🇰","🇱🇷","🇱🇸","🇱🇹","🇱🇺","🇱🇻","🇱🇾","🇲🇦","🇲🇨","🇲🇩","🇲🇪","🇲🇫","🇲🇬","🇲🇭","🇲🇰","🇲🇱","🇲🇲",
+    "🇲🇳","🇲🇴","🇲🇵","🇲🇶","🇲🇷","🇲🇸","🇲🇹","🇲🇺","🇲🇻","🇲🇼","🇲🇽","🇲🇾","🇲🇿","🇳🇦","🇳🇨","🇳🇪","🇳🇫","🇳🇬","🇳🇮","🇳🇱",
+    "🇳🇴","🇳🇵","🇳🇷","🇳🇺","🇳🇿","🇴🇲","🇵🇦","🇵🇪","🇵🇫","🇵🇬","🇵🇭","🇵🇰","🇵🇱","🇵🇲","🇵🇳","🇵🇷","🇵🇸","🇵🇹","🇵🇼","🇵🇾",
+    "🇶🇦","🇷🇪","🇷🇴","🇷🇸","🇷🇺","🇷🇼","🇸🇦","🇸🇧","🇸🇨","🇸🇩","🇸🇪","🇸🇬","🇸🇭","🇸🇮","🇸🇯","🇸🇰","🇸🇱","🇸🇲","🇸🇳","🇸🇴",
+    "🇸🇷","🇸🇸","🇸🇹","🇸🇻","🇸🇽","🇸🇾","🇸🇿","🇹🇦","🇹🇨","🇹🇩","🇹🇫","🇹🇬","🇹🇭","🇹🇯","🇹🇰","🇹🇱","🇹🇲","🇹🇳","🇹🇴","🇹🇷",
+    "🇹🇹","🇹🇻","🇹🇼","🇹🇿","🇺🇦","🇺🇬","🇺🇲","🇺🇳","🇺🇸","🇺🇾","🇺🇿","🇻🇦","🇻🇨","🇻🇪","🇻🇬","🇻🇮","🇻🇳","🇻🇺","🇼🇫","🇼🇸",
+    "🇽🇰","🇾🇪","🇾🇹","🇿🇦","🇿🇲","🇿🇼","🏴󠁧󠁢󠁥󠁮󠁧󠁿","🏴󠁧󠁢󠁳󠁣󠁴󠁿","🏴󠁧󠁢󠁷󠁬󠁳󠁿"
+];
+
+EMOJIS.forEach(em => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = em;
+    b.onclick = () => { chatInput.value += em; chatInput.focus(); };
+    emojiPicker.appendChild(b);
+});
+
+function showToast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+function persistChats() {
+    try {
+        localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(state.chats));
+        if (state.activeChatId) {
+            localStorage.setItem(ACTIVE_CHAT_STORAGE_KEY, state.activeChatId);
+        } else {
+            localStorage.removeItem(ACTIVE_CHAT_STORAGE_KEY);
+        }
+    } catch (error) {
+        console.error("Could not save conversations:", error);
+        showToast("Could not save chat history. Browser storage may be full.");
+    }
+}
+
+function renderHistory() {
+    const query = searchChats.value.trim().toLowerCase();
+    const matches = [...state.chats]
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+        .filter(chat => {
+            const searchableText = [chat.title, ...chat.messages.map(message => message.text)]
+                .join(" ")
+                .toLowerCase();
+            return searchableText.includes(query);
+        });
+
+    historyList.replaceChildren();
+    if (!matches.length) {
+        const emptyMessage = document.createElement("p");
+        emptyMessage.className = "history-empty";
+        emptyMessage.textContent = query ? "No matching conversations." : "Your conversations will appear here.";
+        historyList.appendChild(emptyMessage);
+        return;
+    }
+
+    matches.forEach(chat => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `history-item${chat.id === state.activeChatId ? " active" : ""}`;
+        button.textContent = chat.title;
+        button.title = chat.title;
+        button.addEventListener("click", () => openChat(chat.id));
+        historyList.appendChild(button);
+    });
+}
+
+function persistChat(chat) {
+    chat.updatedAt = Date.now();
+    chat.mode = state.mode;
+    state.chats.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    persistChats();
+    renderHistory();
+}
+
+function startNewChat() {
+    if (state.isGenerating) {
+        showToast("Wait for the current response before starting a new chat.");
+        return;
+    }
+
+    state.activeChatId = null;
+    state.attachedFile = null;
+    state.attachedImage = null;
+    state.mode = "chat";
+    messagesEl.replaceChildren();
+    welcomeScreen.style.display = "";
+    chatInput.value = "";
+    chatInput.style.height = "auto";
+    renderAttachment();
+    setMode("chat");
+    persistChats();
+    renderHistory();
+    chatScroll.scrollTop = 0;
+    chatInput.focus();
+}
+
+function openChat(chatId) {
+    if (state.isGenerating) {
+        showToast("Wait for the current response before switching chats.");
+        return;
+    }
+
+    const chat = state.chats.find(item => item.id === chatId);
+    if (!chat) {
+        showToast("That conversation could not be found.");
+        return;
+    }
+
+    state.activeChatId = chat.id;
+    state.attachedFile = null;
+    state.attachedImage = null;
+    renderAttachment();
+    messagesEl.replaceChildren();
+    welcomeScreen.style.display = chat.messages.length ? "none" : "";
+    setMode(chat.mode || "chat");
+    chat.messages.forEach(message => {
+        if (message.role === "user") {
+            appendUserMessage(message.text, message.image || null);
+        } else {
+            appendAssistantMessage(message.text);
+        }
+    });
+    persistChats();
+    renderHistory();
+    chatScroll.scrollTop = chatScroll.scrollHeight;
+}
+
+function createConversation(title) {
+    const chat = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        title: title.length > 48 ? `${title.slice(0, 47).trimEnd()}…` : title,
+        mode: state.mode,
+        messages: [],
+        updatedAt: Date.now()
+    };
+    state.chats.unshift(chat);
+    state.activeChatId = chat.id;
+    return chat;
+}
+
+newChatBtn.addEventListener("click", startNewChat);
+searchChats.addEventListener("input", renderHistory);
+
+chatInput.addEventListener("input", () => {
+    chatInput.style.height = "auto";
+    chatInput.style.height = Math.min(chatInput.scrollHeight, 180) + "px";
+});
+
+plusBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    emojiPicker.classList.remove("open");
+    modelDropdown.classList.remove("open");
+    plusMenu.classList.toggle("open");
+    plusBtn.classList.toggle("active");
+});
+
+emojiBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    plusMenu.classList.remove("open");
+    modelDropdown.classList.remove("open");
+    emojiPicker.classList.toggle("open");
+});
+
+modelPillBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    plusMenu.classList.remove("open");
+    emojiPicker.classList.remove("open");
+    modelDropdown.classList.toggle("open");
+});
+
+document.addEventListener("click", () => {
+    plusMenu.classList.remove("open");
+    plusBtn.classList.remove("active");
+    emojiPicker.classList.remove("open");
+    modelDropdown.classList.remove("open");
+});
+
+document.getElementById("uploadFileAction").addEventListener("click", () => hiddenFileInput.click());
+document.getElementById("uploadImageAction").addEventListener("click", () => hiddenImageInput.click());
+
+document.getElementById("openCameraAction").addEventListener("click", async () => {
+    plusMenu.classList.remove("open");
+    plusBtn.classList.remove("active");
+    try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        cameraVideo.srcObject = cameraStream;
+        cameraModal.classList.add("open");
+    } catch (err) {
+        showToast("Camera access denied or unavailable 📷");
+    }
+});
+
+document.getElementById("closeCameraBtn").addEventListener("click", () => {
+    if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+    cameraModal.classList.remove("open");
+});
+
+document.getElementById("captureBtn").addEventListener("click", () => {
+    cameraCanvas.width = cameraVideo.videoWidth || 640;
+    cameraCanvas.height = cameraVideo.videoHeight || 480;
+    const ctx = cameraCanvas.getContext("2d");
+    ctx.drawImage(cameraVideo, 0, 0, cameraCanvas.width, cameraCanvas.height);
+    state.attachedImage = cameraCanvas.toDataURL("image/png");
+    if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+    cameraModal.classList.remove("open");
+    renderAttachment();
+    showToast("Photo captured! 📸");
+});
+
+hiddenFileInput.addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+        state.attachedFile = { name: f.name, content: r.result.slice(0, 12000) };
+        renderAttachment();
+    };
+    r.readAsText(f);
+    hiddenFileInput.value = "";
+});
+
+hiddenImageInput.addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+        state.attachedImage = r.result;
+        renderAttachment();
+    };
+    r.readAsDataURL(f);
+    hiddenImageInput.value = "";
+});
+
+function renderAttachment() {
+    let html = "";
+    if (state.attachedFile) {
+        html += `<div class="attachment-chip"><span>📄 ${escapeHtml(state.attachedFile.name)}</span><button type="button" onclick="removeFile()">✕</button></div>`;
+    }
+    if (state.attachedImage) {
+        html += `<div class="attachment-chip"><span>🖼️ Image / Photo Attached</span><button type="button" onclick="removeImage()">✕</button></div>`;
+    }
+    attachmentPreview.innerHTML = html;
+}
+window.removeFile = () => { state.attachedFile = null; renderAttachment(); };
+window.removeImage = () => { state.attachedImage = null; renderAttachment(); };
+
+function setMode(mode) {
+    state.mode = mode;
+    document.querySelectorAll("#modeNav button").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+    const labels = {
+        chat: "Fast",
+        deepseek: "DeepSeek",
+        codex: "Fast Codex",
+        creative: "Creative",
+        image: "Fast Imagine",
+        explore: "Fast Explore"
+    };
+    modelPillBtn.innerHTML = `${labels[mode] || "Fast"} <span>0.0 ▾</span>`;
+}
+
+document.querySelectorAll("#modeNav button, .model-option, [data-mode]").forEach(b => {
+    b.addEventListener("click", () => {
+        if (b.dataset.mode) {
+            setMode(b.dataset.mode);
+            modelDropdown.classList.remove("open");
+            plusMenu.classList.remove("open");
+            plusBtn.classList.remove("active");
+        }
+    });
+});
+
+document.querySelectorAll("[data-quick-mode]").forEach(b => {
+    b.addEventListener("click", () => {
+        setMode(b.dataset.quickMode);
+        plusMenu.classList.remove("open");
+        plusBtn.classList.remove("active");
+    });
+});
+
+document.querySelectorAll(".starters button").forEach(b => {
+    b.addEventListener("click", () => {
+        chatInput.value = b.dataset.prompt;
+        sendMessage();
+    });
+});
+
+function escapeHtml(str) {
+    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function formatInline(text) {
+    let s = escapeHtml(text);
+    s = s.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    return s;
+}
+
+function renderMarkdown(raw) {
+    const codeBlocks = [];
+    let proc = raw.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (_, lang, code) => {
+        const id = codeBlocks.length;
+        codeBlocks.push({ lang: lang || "code", code: code.replace(/\n$/, "") });
+        return `@@CODEBLOCK_${id}@@`;
+    });
+
+    const lines = proc.split("\n");
+    let html = "";
+    let i = 0;
+    while (i < lines.length) {
+        const line = lines[i];
+        const match = line.trim().match(/^@@CODEBLOCK_(\d+)@@$/);
+        if (match) {
+            const b = codeBlocks[Number(match[1])];
+            html += `<div class="code-block"><div class="code-header"><span>${escapeHtml(b.lang)}</span><button class="copy-btn" onclick="copyCode(this)">📋 Copy</button></div><pre><code>${escapeHtml(b.code)}</code></pre></div>`;
+            i++;
+            continue;
+        }
+        if (line.trim().startsWith("|") && i + 1 < lines.length) {
+            const headers = line.trim().replace(/^\|+|\|+$/g,"").split("|").map(c=>c.trim());
+            i += 2;
+            const rows = [];
+            while (i < lines.length && lines[i].trim().startsWith("|")) {
+                rows.push(lines[i].trim().replace(/^\|+|\|+$/g,"").split("|").map(c=>c.trim()));
+                i++;
+            }
+            html += `<div class="table-wrapper"><table class="md-table"><thead><tr>`;
+            headers.forEach(h => html += `<th>${formatInline(h)}</th>`);
+            html += `</tr></thead><tbody>`;
+            rows.forEach(r => {
+                html += `<tr>`;
+                headers.forEach((_, idx) => html += `<td>${formatInline(r[idx] || "")}</td>`);
+                html += `</tr>`;
+            });
+            html += `</tbody></table></div>`;
+            continue;
+        }
+        if (line.startsWith("### ")) { html += `<h3>${formatInline(line.slice(4))}</h3>`; i++; continue; }
+        if (line.startsWith("## ")) { html += `<h2>${formatInline(line.slice(3))}</h2>`; i++; continue; }
+        if (line.startsWith("# ")) { html += `<h1>${formatInline(line.slice(2))}</h1>`; i++; continue; }
+        if (!line.trim()) { i++; continue; }
+        html += `<p>${formatInline(line)}</p>`;
+        i++;
+    }
+    return `<div class="rich-content">${html}</div>`;
+}
+
+window.copyCode = (btn) => {
+    navigator.clipboard.writeText(btn.closest(".code-block").querySelector("code").innerText);
+    showToast("Code copied! 📋");
+};
+
+function appendUserMessage(text, img=null) {
+    welcomeScreen.style.display = "none";
+    const div = document.createElement("div");
+    div.className = "message user";
+    let content = "";
+    if (img) content += `<img src="${img}" class="uploaded-preview-thumb">`;
+    if (text) content += `<div>${escapeHtml(text)}</div>`;
+    div.innerHTML = `<div class="bubble">${content}</div>`;
+    messagesEl.appendChild(div);
+    chatScroll.scrollTop = chatScroll.scrollHeight;
+}
+
+function appendAssistantMessage(text) {
+    const div = document.createElement("div");
+    div.className = "message assistant";
+    div.innerHTML = `
+        <div class="meta-orb"><span class="meta-orb-inner">🔥</span></div>
+        <div class="assistant-body">${renderMarkdown(text)}</div>`;
+    messagesEl.appendChild(div);
+    chatScroll.scrollTop = chatScroll.scrollHeight;
+}
+
+// 3-Stage Thinking Animation
+function createThinkingBubble() {
+    const div = document.createElement("div");
+    div.className = "message assistant";
+    div.innerHTML = `
+        <div class="meta-orb"><span class="meta-orb-inner">🔥</span></div>
+        <div class="assistant-body">
+            <div class="thinking-stage" id="activeThinkingStage">
+                <div class="color-dots"><span></span><span></span><span></span></div>
+            </div>
+        </div>`;
+    messagesEl.appendChild(div);
+    chatScroll.scrollTop = chatScroll.scrollHeight;
+
+    const stage = div.querySelector("#activeThinkingStage");
+
+    const t1 = setTimeout(() => {
+        if (stage) stage.innerHTML = `<span class="thinking-text">Thinking...</span>`;
+    }, 1100);
+
+    const t2 = setTimeout(() => {
+        if (stage) stage.innerHTML = `<span class="got-it-badge">Got it! ✨</span>`;
+    }, 2400);
+
+    return {
+        body: div.querySelector(".assistant-body"),
+        cleanup: () => { clearTimeout(t1); clearTimeout(t2); }
+    };
+}
+
+async function sendMessage() {
+    if (state.isGenerating) return;
+    let text = chatInput.value.trim();
+    if (!text && !state.attachedFile && !state.attachedImage) return;
+
+    const imagePayload = state.attachedImage;
+    const displayText = text || (state.attachedFile
+        ? `📎 ${state.attachedFile.name}`
+        : imagePayload ? "🖼️ Image attached" : "");
+    let chat = state.chats.find(item => item.id === state.activeChatId);
+    if (!chat) {
+        const title = text || (state.attachedFile
+            ? `📎 ${state.attachedFile.name}`
+            : imagePayload ? "🖼️ Image conversation" : "New conversation");
+        chat = createConversation(title);
+    }
+
+    let payloadMsg = text;
+    if (state.attachedFile) {
+        payloadMsg += `\n\n[File: ${state.attachedFile.name}]\n\`\`\`\n${state.attachedFile.content}\n\`\`\``;
+    }
+
+    appendUserMessage(displayText, imagePayload);
+    chat.messages.push({ role: "user", text: displayText, image: imagePayload });
+    persistChat(chat);
+
+    chatInput.value = "";
+    chatInput.style.height = "auto";
+    state.attachedFile = null;
+    state.attachedImage = null;
+    renderAttachment();
+    state.isGenerating = true;
+    sendBtn.disabled = true;
+
+    const thinking = createThinkingBubble();
+    const minTime = new Promise(r => setTimeout(r, 3100));
+
+    try {
+        const [res] = await Promise.all([
+            fetch("/ask", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message: payloadMsg, mode: state.mode, image: imagePayload })
+            }),
+            minTime
+        ]);
+        const data = await res.json();
+        thinking.cleanup();
+        const assistantText = data.text || "Done! ✨";
+        if (data.type === "image_pending" && data.jobId) {
+            thinking.body.innerHTML = `<p>${escapeHtml(assistantText)}</p>`;
+        } else {
+            thinking.body.innerHTML = renderMarkdown(assistantText);
+        }
+        chat.messages.push({ role: "assistant", text: assistantText });
+        persistChat(chat);
+    } catch (err) {
+        thinking.cleanup();
+        const errorText = `⚠️ Connection error: ${err.message}`;
+        thinking.body.innerHTML = `<p>${escapeHtml(errorText)}</p>`;
+        chat.messages.push({ role: "assistant", text: errorText });
+        persistChat(chat);
+    } finally {
+        state.isGenerating = false;
+        sendBtn.disabled = false;
+        chatScroll.scrollTop = chatScroll.scrollHeight;
+    }
+}
+
+sendBtn.addEventListener("click", sendMessage);
+chatInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+});
+
+renderHistory();
+const restoredChat = state.chats.find(chat => chat.id === state.activeChatId);
+if (restoredChat) {
+    openChat(restoredChat.id);
+} else {
+    state.activeChatId = null;
+    persistChats();
+    renderHistory();
+}
+</script>
+</body>
+</html>
+"""
 
 if __name__ == "__main__":
-
-    print()
-    print("=" * 60)
-    print(" COMPANION AI")
-    print("=" * 60)
-    print("General AI interface")
-    print()
-    print("Open this address in your browser:")
-    print("http://127.0.0.1:5000")
-    print("=" * 60)
-    print()
-
-    app.run(
-        host="127.0.0.1",
-        port=5000,
-        debug=True
-    )
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
